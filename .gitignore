@@ -1,0 +1,8 @@
+node_modules
+.next
+data
+storage
+.env.local
+public/uploads/*
+!public/uploads/.gitkeep
+tsconfig.tsbuildinfo
