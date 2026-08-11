@@ -29,7 +29,6 @@ export async function POST(req: NextRequest) {
   }
 
   const normalizedEmail = email.trim().toLowerCase()
-  const db = getDb()
   const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(normalizedEmail)
   if (existing) {
     return NextResponse.json({ error: 'Cette adresse email est déjà utilisée' }, { status: 409 })
