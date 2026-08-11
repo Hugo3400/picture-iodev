@@ -1,7 +1,8 @@
 import Database from 'better-sqlite3'
 import path from 'path'
 
-const DB_PATH = path.join(process.cwd(), 'data', 'picture.db')
+// DB_PATH surchargeable par env var pour isoler la DB des tests de la DB de prod.
+const DB_PATH = process.env.DB_PATH || path.join(process.cwd(), 'data', 'picture.db')
 
 let db: Database.Database | null = null
 
@@ -108,10 +109,51 @@ export function getDb(): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_public_uploads_expires ON public_uploads(expires_at);
   `)
 
-  const userCols = db.prepare("PRAGMA table_info(users)").all() as { name: string }[]
+  const userCols = db.prepare("PRAGMA table_info(users)").all() as { name: string; notnull: number }[]
   if (!userCols.some(c => c.name === 'discord_username')) {
     db.exec('ALTER TABLE users ADD COLUMN discord_username TEXT')
   }
+
+  // discord_id était UNIQUE NOT NULL à l'origine (auth Discord uniquement). Pour
+  // accueillir les comptes email+mot de passe (sans discord_id), il faut lever ce
+  // NOT NULL — chose que SQLite ne permet pas via un simple ALTER TABLE. On reconstruit
+  // donc la table (schéma cible incluant email/password_hash) en préservant les id
+  // (les FK des autres tables pointent dessus) et les données existantes. Le rebuild
+  // est protégé par foreign_keys=OFF le temps de l'opération, comme recommandé par
+  // SQLite pour ce genre de restructuration.
+  if (userCols.some(c => c.name === 'discord_id' && c.notnull === 1)) {
+    const conn = db
+    conn.pragma('foreign_keys = OFF')
+    conn.transaction(() => {
+      conn.exec(`
+        CREATE TABLE users_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          discord_id TEXT UNIQUE,
+          discord_name TEXT NOT NULL,
+          discord_username TEXT,
+          discord_avatar TEXT,
+          email TEXT UNIQUE,
+          password_hash TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          CHECK (discord_id IS NOT NULL OR email IS NOT NULL)
+        );
+        INSERT INTO users_new (id, discord_id, discord_name, discord_username, discord_avatar, created_at)
+          SELECT id, discord_id, discord_name, discord_username, discord_avatar, created_at FROM users;
+        DROP TABLE users;
+        ALTER TABLE users_new RENAME TO users;
+      `)
+    })()
+    conn.pragma('foreign_keys = ON')
+  }
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS login_attempts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ip TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_login_attempts_lookup ON login_attempts(ip, created_at);
+  `)
 
   const publicUploadCols = db.prepare("PRAGMA table_info(public_uploads)").all() as { name: string }[]
   if (!publicUploadCols.some(c => c.name === 'ip')) {

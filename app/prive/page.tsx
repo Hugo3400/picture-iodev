@@ -3,6 +3,7 @@ export const dynamic = 'force-dynamic'
 import { getSession } from '@/lib/session'
 import { getDb } from '@/lib/db'
 import PrivateGallery from '@/components/PrivateGallery'
+import LoginForm from '@/components/LoginForm'
 import { Logo, IconLock, IconDiscord } from '@/components/icons'
 
 export default async function PrivePage() {
@@ -18,9 +19,18 @@ export default async function PrivePage() {
           <div style={{ width: 48, height: 48, borderRadius: '50%', background: 'rgba(91,141,239,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', color: 'var(--accent)' }}><IconLock size={20} /></div>
           <h1 style={{ color: 'var(--text)', fontSize: 19, fontWeight: 600, marginBottom: 8 }}>Espace privé</h1>
           <p style={{ color: 'var(--text-dim)', fontSize: 13, marginBottom: 26, lineHeight: 1.6 }}>Connecte-toi avec Discord pour accéder à tes albums privés et partager tes photos.</p>
-          <a href="/api/auth/discord" style={{ display: 'inline-flex', alignItems: 'center', gap: 9, background: '#5865F2', color: '#fff', textDecoration: 'none', borderRadius: 'var(--radius-sm)', padding: '11px 22px', fontSize: 14, fontWeight: 600 }}>
+          <a href="/api/auth/discord" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '100%', boxSizing: 'border-box', gap: 9, background: '#5865F2', color: '#fff', textDecoration: 'none', borderRadius: 'var(--radius-sm)', padding: '11px 22px', fontSize: 14, fontWeight: 600 }}>
             <IconDiscord size={17} /> Se connecter avec Discord
           </a>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '20px 0' }}>
+            <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+            <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>ou</span>
+            <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+          </div>
+
+          <LoginForm />
+
           <div style={{ marginTop: 22 }}>
             <a href="/" style={{ fontSize: 12, color: 'var(--text-faint)', textDecoration: 'none' }}>← Retour à la galerie publique</a>
           </div>

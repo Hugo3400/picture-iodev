@@ -7,7 +7,7 @@ const TTL_DAYS = 30
 
 export type SessionUser = {
   id: number
-  discord_id: string
+  discord_id: string | null
   discord_name: string
   discord_avatar: string | null
 }
