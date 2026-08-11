@@ -238,16 +238,22 @@ export default function AdminPanel({
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
-                  <th style={S.th}>Utilisateur</th>
-                  <th style={S.th}>Inscrit le</th>
-                  <th style={S.th}>Photos</th>
-                  <th style={S.th}>Albums</th>
-                  <th style={S.th}>Sessions actives</th>
+                  <SortTh label="Utilisateur" sortKey="discord_name" sort={usersSort} onSort={setUsersSort} />
+                  <SortTh label="Inscrit le" sortKey="created_at" sort={usersSort} onSort={setUsersSort} />
+                  <SortTh label="Photos" sortKey="photo_count" sort={usersSort} onSort={setUsersSort} />
+                  <SortTh label="Albums" sortKey="album_count" sort={usersSort} onSort={setUsersSort} />
+                  <SortTh label="Sessions actives" sortKey="active_sessions" sort={usersSort} onSort={setUsersSort} />
                   <th style={S.th}>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {users.map(u => (
+                {sortRows(users, usersSort, {
+                  discord_name: u => u.discord_name,
+                  created_at: u => u.created_at,
+                  photo_count: u => u.photo_count,
+                  album_count: u => u.album_count,
+                  active_sessions: u => u.active_sessions,
+                }).map(u => (
                   <tr key={u.id}>
                     <td style={S.td}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -293,16 +299,22 @@ export default function AdminPanel({
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
-                  <th style={S.th}>Fichier</th>
-                  <th style={S.th}>Taille</th>
-                  <th style={S.th}>IP</th>
-                  <th style={S.th}>Envoyé le</th>
-                  <th style={S.th}>Expiration</th>
+                  <SortTh label="Fichier" sortKey="name" sort={uploadsSort} onSort={setUploadsSort} />
+                  <SortTh label="Taille" sortKey="size" sort={uploadsSort} onSort={setUploadsSort} />
+                  <SortTh label="IP" sortKey="ip" sort={uploadsSort} onSort={setUploadsSort} />
+                  <SortTh label="Envoyé le" sortKey="created_at" sort={uploadsSort} onSort={setUploadsSort} />
+                  <SortTh label="Expiration" sortKey="expires_at" sort={uploadsSort} onSort={setUploadsSort} />
                   <th style={S.th}>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {uploads.map(u => (
+                {sortRows(uploads, uploadsSort, {
+                  name: u => u.original_name || u.filename,
+                  size: u => u.size,
+                  ip: u => u.ip,
+                  created_at: u => u.created_at,
+                  expires_at: u => u.expires_at,
+                }).map(u => (
                   <tr key={u.id}>
                     <td style={{ ...S.td, maxWidth: 280 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -338,14 +350,19 @@ export default function AdminPanel({
             <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 8 }}>
               <thead>
                 <tr>
-                  <th style={S.th}>IP</th>
-                  <th style={S.th}>Token du lien</th>
-                  <th style={S.th}>Tentatives</th>
-                  <th style={S.th}>Dernière tentative</th>
+                  <SortTh label="IP" sortKey="ip" sort={securitySort} onSort={setSecuritySort} />
+                  <SortTh label="Token du lien" sortKey="token" sort={securitySort} onSort={setSecuritySort} />
+                  <SortTh label="Tentatives" sortKey="attempts" sort={securitySort} onSort={setSecuritySort} />
+                  <SortTh label="Dernière tentative" sortKey="last_attempt" sort={securitySort} onSort={setSecuritySort} />
                 </tr>
               </thead>
               <tbody>
-                {initialAbuseAttempts.map((a, i) => (
+                {sortRows(initialAbuseAttempts, securitySort, {
+                  ip: a => a.ip,
+                  token: a => a.token,
+                  attempts: a => a.attempts,
+                  last_attempt: a => a.last_attempt,
+                }).map((a, i) => (
                   <tr key={i}>
                     <td style={S.td}>{a.ip}</td>
                     <td style={{ ...S.td, fontFamily: 'monospace', fontSize: 12 }}>{a.token}</td>
