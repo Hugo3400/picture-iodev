@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getDb } from '@/lib/db'
 import { getSession } from '@/lib/session'
-import { verifyUnlock, unlockCookieName } from '@/lib/share'
+import { verifyUnlock, unlockCookieName, isShareLinkExpired } from '@/lib/share'
 import { canEditPhoto } from '@/lib/permissions'
 import { createReadStream, existsSync, statSync } from 'fs'
 import { withErrorNotify } from '@/lib/errorNotify'
@@ -34,7 +34,9 @@ export const GET = withErrorNotify('GET', async (req: NextRequest, { params }: {
     if (link) {
       const matches = (link.type === 'photo' && link.target_id === photo.id) ||
         (link.type === 'album' && photo.album_id !== null && link.target_id === photo.album_id)
-      if (matches) {
+      // Un lien expiré ne doit plus donner accès au fichier, même en gardant l'URL
+      // directe de l'image (contournement du endpoint /api/share/[token]).
+      if (matches && !isShareLinkExpired(link)) {
         if (!link.password_hash) {
           allowed = true
         } else {

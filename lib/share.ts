@@ -38,6 +38,13 @@ export function verifyUnlock(token: string, value: string | undefined): boolean 
   return timingSafeStringEqual(value, signUnlock(token))
 }
 
+// expires_at est écrit par computeExpiresAt() (lib/publicUploads.ts) au format ISO
+// (new Date().toISOString()) : rester sur une comparaison de string ISO ici, ne pas
+// mélanger avec le format SQLite datetime('now') utilisé par created_at.
+export function isShareLinkExpired(link: { expires_at: string | null }): boolean {
+  return !!link.expires_at && link.expires_at <= new Date().toISOString()
+}
+
 export const UNLOCK_ATTEMPT_LIMIT = 10
 export const UNLOCK_ATTEMPT_WINDOW_MS = 15 * 60 * 1000
 

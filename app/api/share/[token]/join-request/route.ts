@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/session'
 import { getDb } from '@/lib/db'
 import { createJoinRequest } from '@/lib/permissions'
+import { isShareLinkExpired } from '@/lib/share'
 
 export async function POST(_req: NextRequest, { params }: { params: { token: string } }) {
   const user = await getSession()
@@ -10,6 +11,7 @@ export async function POST(_req: NextRequest, { params }: { params: { token: str
   const db = getDb()
   const link = db.prepare('SELECT * FROM share_links WHERE token = ?').get(params.token) as any
   if (!link) return NextResponse.json({ error: 'Lien introuvable' }, { status: 404 })
+  if (isShareLinkExpired(link)) return NextResponse.json({ error: 'Ce lien a expiré', expired: true }, { status: 410 })
   if (link.type !== 'album') return NextResponse.json({ error: 'Cette demande ne concerne que les albums' }, { status: 400 })
 
   const result = createJoinRequest(db, link.target_id, user.id)

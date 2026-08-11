@@ -160,5 +160,10 @@ export function getDb(): Database.Database {
     `)
   }
 
+  const shareLinkCols = db.prepare("PRAGMA table_info(share_links)").all() as { name: string }[]
+  if (!shareLinkCols.some(c => c.name === 'expires_at')) {
+    db.exec('ALTER TABLE share_links ADD COLUMN expires_at TEXT')
+  }
+
   return db
 }

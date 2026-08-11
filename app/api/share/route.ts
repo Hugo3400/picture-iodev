@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/session'
 import { getDb } from '@/lib/db'
 import { generateShareToken, hashPassword } from '@/lib/share'
+import { ExpiryChoice, computeExpiresAt } from '@/lib/publicUploads'
 import Database from 'better-sqlite3'
+
+const VALID_EXPIRY: ExpiryChoice[] = ['1h', '24h', '7d', '30d', 'never']
 
 // Seul le propriétaire de la photo, ou le propriétaire de l'album qui la contient, peut publier un lien public.
 // Un co-éditeur peut éditer le contenu d'un album partagé mais ne peut pas en exposer un lien public.
@@ -26,7 +29,7 @@ export async function GET(req: NextRequest) {
   if (!type || !targetId) return NextResponse.json({ error: 'Requête invalide' }, { status: 400 })
 
   const db = getDb()
-  const link = db.prepare('SELECT token, password_hash, view_count FROM share_links WHERE type = ? AND target_id = ?').get(type, targetId) as any
+  const link = db.prepare('SELECT token, password_hash, view_count, expires_at FROM share_links WHERE type = ? AND target_id = ?').get(type, targetId) as any
   if (!link) return NextResponse.json({ shared: false })
 
   return NextResponse.json({
@@ -35,6 +38,7 @@ export async function GET(req: NextRequest) {
     url: `https://picture.iodev.fr/partage/${link.token}`,
     hasPassword: !!link.password_hash,
     viewCount: link.view_count,
+    expiresAt: link.expires_at,
   })
 }
 
@@ -42,7 +46,7 @@ export async function POST(req: NextRequest) {
   const user = await getSession()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { type, target_id, password } = await req.json()
+  const { type, target_id, password, expires_in } = await req.json()
   if (!['photo', 'album'].includes(type) || !target_id) {
     return NextResponse.json({ error: 'Requête invalide' }, { status: 400 })
   }
@@ -54,17 +58,21 @@ export async function POST(req: NextRequest) {
   const existing = db.prepare('SELECT * FROM share_links WHERE type = ? AND target_id = ?').get(type, target_id) as any
 
   const passwordHash = password ? hashPassword(password) : null
+  // Même fallback sûr que /api/upload : un appelant qui omet expires_in (ou envoie
+  // une valeur invalide) ne doit jamais se retrouver avec une expiration surprise.
+  const expiry: ExpiryChoice = VALID_EXPIRY.includes(expires_in) ? expires_in : 'never'
+  const expiresAt = computeExpiresAt(expiry)
 
   let token: string
   if (existing) {
-    db.prepare('UPDATE share_links SET password_hash = ? WHERE id = ?').run(passwordHash, existing.id)
+    db.prepare('UPDATE share_links SET password_hash = ?, expires_at = ? WHERE id = ?').run(passwordHash, expiresAt, existing.id)
     token = existing.token
   } else {
     token = generateShareToken()
-    db.prepare('INSERT INTO share_links (token, type, target_id, password_hash) VALUES (?, ?, ?, ?)').run(token, type, target_id, passwordHash)
+    db.prepare('INSERT INTO share_links (token, type, target_id, password_hash, expires_at) VALUES (?, ?, ?, ?, ?)').run(token, type, target_id, passwordHash, expiresAt)
   }
 
-  return NextResponse.json({ token, url: `https://picture.iodev.fr/partage/${token}` })
+  return NextResponse.json({ token, url: `https://picture.iodev.fr/partage/${token}`, expiresAt })
 }
 
 export async function DELETE(req: NextRequest) {
