@@ -53,7 +53,7 @@ export async function GET(req: NextRequest) {
   const state = req.nextUrl.searchParams.get('state')
   const safeRedirect = state && state.startsWith('/') && !state.startsWith('//') ? state : '/prive'
 
-  const token = createSession(userId)
+  const token = createSession(userId, req.headers.get('user-agent'))
   const res = NextResponse.redirect(`${BASE_URL}${safeRedirect}`)
   res.cookies.set(SESSION_COOKIE, token, { httpOnly: true, secure: true, path: '/', maxAge: TTL * 86400, sameSite: 'lax' })
   return res

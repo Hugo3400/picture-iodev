@@ -7,13 +7,15 @@ import {
   MAX_FILE_SIZE, MAX_FILES_PER_REQUEST, RATE_LIMIT_COUNT, getClientIp, countRecentUploads,
 } from '@/lib/publicUploads'
 import { sniffImageExt } from '@/lib/imageSniff'
+import { scanBuffer } from '@/lib/antivirus'
+import { withErrorNotify } from '@/lib/errorNotify'
 import path from 'path'
 
 export const dynamic = 'force-dynamic'
 
 const VALID_EXPIRY: ExpiryChoice[] = ['1h', '24h', '7d', '30d', 'never']
 
-export async function POST(req: NextRequest) {
+export const POST = withErrorNotify('POST', async (req: NextRequest) => {
   const db = getDb()
   cleanupExpiredPublicUploads(db)
 
@@ -58,6 +60,11 @@ export async function POST(req: NextRequest) {
     if (!ext) {
       return NextResponse.json({ error: `"${file.name}" n'est pas une image valide` }, { status: 400 })
     }
+    // best-effort : une panne de clamd ne doit pas bloquer tous les uploads du site.
+    const scan = await scanBuffer(bytes)
+    if ('infected' in scan && scan.infected) {
+      return NextResponse.json({ error: `"${file.name}" a été rejeté par l'antivirus${scan.virusName ? ` (${scan.virusName})` : ''}` }, { status: 400 })
+    }
     withBytes.push({ file, bytes, ext })
   }
 
@@ -78,4 +85,4 @@ export async function POST(req: NextRequest) {
   }
 
   return NextResponse.json({ uploaded })
-}
+})

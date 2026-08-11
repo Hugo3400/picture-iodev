@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { Logo, IconLock, IconImage, IconClose, IconUpload, IconCheck, IconClock, IconLink, IconTrash } from './icons'
+import { toast } from 'sonner'
+import { Logo, IconLock, IconImage, IconClose, IconUpload, IconClock, IconLink, IconTrash } from './icons'
 
 type ExpiryChoice = '1h' | '24h' | '7d' | '30d' | 'never'
 
@@ -50,15 +51,20 @@ export default function ImageHost() {
   const [files, setFiles] = useState<File[]>([])
   const [expiry, setExpiry] = useState<ExpiryChoice>('24h')
   const [uploading, setUploading] = useState(false)
-  const [error, setError] = useState('')
   const [results, setResults] = useState<UploadedFile[]>([])
-  const [copiedFile, setCopiedFile] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     setResults(loadHistory())
+    const saved = localStorage.getItem('picture-host-expiry')
+    if (saved && EXPIRY_OPTIONS.some(o => o.value === saved)) setExpiry(saved as ExpiryChoice)
   }, [])
+
+  const changeExpiry = (v: ExpiryChoice) => {
+    setExpiry(v)
+    localStorage.setItem('picture-host-expiry', v)
+  }
 
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
@@ -86,29 +92,26 @@ export default function ImageHost() {
   const handleUpload = async () => {
     if (!files.length || uploading) return
     setUploading(true)
-    setError('')
     const fd = new FormData()
     fd.append('expires_in', expiry)
     files.forEach(f => fd.append('files', f))
     const r = await fetch('/api/upload', { method: 'POST', body: fd })
     setUploading(false)
     const d = await r.json().catch(() => null)
-    if (!r.ok || !d) { setError(d?.error || 'Erreur serveur, réessaie plus tard'); return }
+    if (!r.ok || !d) { toast.error(d?.error || 'Erreur serveur, réessaie plus tard'); return }
     setResults(prev => {
       const next = [...d.uploaded, ...prev]
       saveHistory(next)
       return next
     })
     setFiles([])
+    toast.success(d.uploaded.length > 1 ? `${d.uploaded.length} images hébergées` : 'Image hébergée')
   }
 
-  const copyLink = (filename: string, url: string) => {
+  const copyLink = (url: string) => {
     const fullUrl = `${window.location.origin}${url}`
     if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(fullUrl).then(() => {
-        setCopiedFile(filename)
-        setTimeout(() => setCopiedFile(null), 1500)
-      })
+      navigator.clipboard.writeText(fullUrl).then(() => toast.success('Lien copié'))
     }
   }
 
@@ -178,7 +181,7 @@ export default function ImageHost() {
             {EXPIRY_OPTIONS.map(opt => (
               <button
                 key={opt.value}
-                onClick={() => setExpiry(opt.value)}
+                onClick={() => changeExpiry(opt.value)}
                 style={{
                   flex: '1 1 auto', minWidth: 70, background: expiry === opt.value ? 'rgba(91,141,239,0.14)' : 'var(--bg)',
                   border: `1px solid ${expiry === opt.value ? 'var(--accent)' : 'var(--border)'}`,
@@ -190,8 +193,6 @@ export default function ImageHost() {
               </button>
             ))}
           </div>
-
-          {error && <p style={{ fontSize: 12, color: 'var(--danger)', background: 'rgba(240,88,107,0.1)', padding: '8px 12px', borderRadius: 'var(--radius-sm)', marginBottom: 12 }}>{error}</p>}
 
           <button onClick={handleUpload} disabled={!files.length || uploading} style={{ ...S.btn(!!files.length && !uploading), width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7 }}>
             <IconUpload size={14} /> {uploading ? 'Envoi en cours…' : 'Héberger'}
@@ -219,8 +220,8 @@ export default function ImageHost() {
                     <IconClock size={11} /> {fmtExpiry(r.expiresAt)}
                   </div>
                 </div>
-                <button onClick={() => copyLink(r.filename, r.url)} style={{ flexShrink: 0, background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '7px 12px', color: 'var(--text-dim)', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}>
-                  {copiedFile === r.filename ? <><IconCheck size={12} /> Copié</> : <><IconLink size={12} /> Copier</>}
+                <button onClick={() => copyLink(r.url)} style={{ flexShrink: 0, background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '7px 12px', color: 'var(--text-dim)', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <IconLink size={12} /> Copier
                 </button>
                 <button
                   onClick={() => setResults(prev => { const next = prev.filter(x => x.filename !== r.filename); saveHistory(next); return next })}

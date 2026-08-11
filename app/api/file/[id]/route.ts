@@ -4,6 +4,8 @@ import { getSession } from '@/lib/session'
 import { verifyUnlock, unlockCookieName } from '@/lib/share'
 import { canEditPhoto } from '@/lib/permissions'
 import { createReadStream, existsSync, statSync } from 'fs'
+import { withErrorNotify } from '@/lib/errorNotify'
+import { Readable } from 'stream'
 import path from 'path'
 
 const STORAGE_DIR = path.join(process.cwd(), 'storage', 'private')
@@ -13,7 +15,7 @@ const MIME: Record<string, string> = {
   webp: 'image/webp', avif: 'image/avif', bmp: 'image/bmp',
 }
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export const GET = withErrorNotify('GET', async (req: NextRequest, { params }: { params: { id: string } }) => {
   const photoId = parseInt(params.id, 10)
   if (!photoId) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
 
@@ -54,12 +56,17 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const ext = servedFilename.split('.').pop()?.toLowerCase() || ''
   const stat = statSync(filePath)
   const stream = createReadStream(filePath)
+  // Un Readable Node.js n'est pas un BodyInit valide : le cast `as any` qu'il y
+  // avait ici masquait l'erreur de type mais laissait undici gérer un flux Node
+  // brut comme corps de réponse, ce qui plante (ERR_INVALID_STATE) dès que le
+  // client annule la requête en cours (fréquent avec le lazy-loading d'images).
+  const webStream = Readable.toWeb(stream) as ReadableStream
 
-  return new NextResponse(stream as any, {
+  return new NextResponse(webStream, {
     headers: {
       'Content-Type': MIME[ext] || 'application/octet-stream',
       'Content-Length': String(stat.size),
       'Cache-Control': 'private, max-age=3600',
     },
   })
-}
+})

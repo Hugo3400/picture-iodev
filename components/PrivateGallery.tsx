@@ -1,9 +1,11 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
+import { toast } from 'sonner'
+import { motion } from 'framer-motion'
 import { Logo, IconLock, IconImage, IconTrash, IconEdit, IconFolder, IconLink, IconClose, IconChevronLeft, IconChevronRight, IconCheck, IconUpload, IconGrid, IconUsers, IconDownload, IconBell, IconSearch, IconLogout } from './icons'
 
-interface Album { id: number; name: string; description: string | null; photo_count: number; created_at: string; role: 'owner' | 'collaborator'; owner_name?: string }
+interface Album { id: number; name: string; description: string | null; photo_count: number; created_at: string; role: 'owner' | 'collaborator'; owner_name?: string; unlisted: number }
 interface Photo { id: number; user_id: number; album_id: number | null; filename: string; original_name: string | null; caption: string | null; size: number; created_at: string; url: string; thumbUrl: string; uploader_name?: string | null; uploader_avatar?: string | null }
 interface User { id: number; discord_id: string; discord_name: string; discord_avatar: string | null }
 interface Collaborator { id: number; invited_name: string; user_id: number | null; discord_name: string | null; discord_avatar: string | null; created_at: string }
@@ -16,8 +18,23 @@ interface Profile {
   member_since: string; photo_count: number; total_size: number; album_count: number; collab_album_count: number
   uploaded_this_hour: number; upload_hour_limit: number
 }
+interface SessionInfo { id: number; created_at: string; expires_at: string; user_agent: string | null; current: boolean }
 
 const fmt = (b: number) => b < 1024 * 1024 ? `${(b / 1024).toFixed(0)} KB` : `${(b / 1024 / 1024).toFixed(1)} MB`
+
+const describeUA = (ua: string | null) => {
+  if (!ua) return 'Appareil inconnu'
+  const os = /iPhone|iPad/.test(ua) ? 'iOS' : /Android/.test(ua) ? 'Android' : /Mac OS X/.test(ua) ? 'macOS' : /Windows/.test(ua) ? 'Windows' : /Linux/.test(ua) ? 'Linux' : 'Appareil'
+  const browser = /Edg\//.test(ua) ? 'Edge' : /OPR\//.test(ua) ? 'Opera' : /Chrome\//.test(ua) ? 'Chrome' : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'Navigateur'
+  return `${browser} sur ${os}`
+}
+
+// Animations d'entrée partagées par tous les modals (pas d'exit animation :
+// le contenu de plusieurs modals dépend d'un state nullable qui redevient null
+// à la fermeture, donc jouer une sortie animée re-render souvent sur des
+// données déjà effacées).
+const overlayMotion = { initial: { opacity: 0 }, animate: { opacity: 1 }, transition: { duration: 0.15 } }
+const cardMotion = { initial: { opacity: 0, scale: 0.96, y: 8 }, animate: { opacity: 1, scale: 1, y: 0 }, transition: { duration: 0.18, ease: 'easeOut' as const } }
 
 export default function PrivateGallery({ user, initialAlbums, initialPhotos }: { user: User; initialAlbums: Album[]; initialPhotos: Photo[] }) {
   const [albums, setAlbums] = useState<Album[]>(initialAlbums)
@@ -59,8 +76,6 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
   const [sharePwd, setSharePwd] = useState('')
   const [shareUsePwd, setShareUsePwd] = useState(false)
   const [shareLoading, setShareLoading] = useState(false)
-  const [shareCopied, setShareCopied] = useState(false)
-  const [hotlinkCopied, setHotlinkCopied] = useState(false)
 
   const [deleteModal, setDeleteModal] = useState<{ type: 'photo' | 'album' | 'photos' | 'leave-album'; id?: number; ids?: number[]; name: string } | null>(null)
   const [deleting, setDeleting] = useState(false)
@@ -86,11 +101,28 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
 
   const [showProfile, setShowProfile] = useState(false)
   const [profile, setProfile] = useState<Profile | null>(null)
+  const [sessions, setSessions] = useState<SessionInfo[] | null>(null)
+  const [sessionsBusy, setSessionsBusy] = useState(false)
   const openProfile = async () => {
     setShowProfile(true)
     setProfile(null)
-    const r = await fetch('/api/profile')
-    if (r.ok) setProfile(await r.json())
+    setSessions(null)
+    const [pr, sr] = await Promise.all([fetch('/api/profile'), fetch('/api/sessions')])
+    if (pr.ok) setProfile(await pr.json())
+    if (sr.ok) setSessions(await sr.json())
+  }
+  const handleDeleteSession = async (id: number) => {
+    setSessions(prev => prev ? prev.filter(s => s.id !== id) : prev)
+    await fetch(`/api/sessions/${id}`, { method: 'DELETE' })
+    toast.success('Session déconnectée')
+  }
+  const handleLogoutOthers = async () => {
+    setSessionsBusy(true)
+    const r = await fetch('/api/sessions', { method: 'DELETE' })
+    const d = await r.json().catch(() => null)
+    setSessions(prev => prev ? prev.filter(s => s.current) : prev)
+    setSessionsBusy(false)
+    toast.success(d?.deleted ? `${d.deleted} session(s) déconnectée(s)` : 'Autres sessions déconnectées')
   }
 
   const selectedAlbumObj = selectedAlbum !== null ? albums.find(a => a.id === selectedAlbum) : null
@@ -277,6 +309,9 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
       setNewAlbumName('')
       setShowNewAlbum(false)
       await refreshAlbums()
+      toast.success('Album créé')
+    } else {
+      toast.error('Erreur lors de la création de l\'album')
     }
   }
 
@@ -285,6 +320,14 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
     await fetch(`/api/albums/${renameAlbum.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: renameAlbum.name.trim() }) })
     setRenameAlbum(null)
     await refreshAlbums()
+    toast.success('Album renommé')
+  }
+
+  const handleToggleUnlisted = async (album: Album) => {
+    const next = album.unlisted ? false : true
+    setAlbums(prev => prev.map(a => a.id === album.id ? { ...a, unlisted: next ? 1 : 0 } : a))
+    await fetch(`/api/albums/${album.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ unlisted: next }) })
+    toast.success(next ? "Album retiré de la recherche" : 'Album visible dans la recherche')
   }
 
   const handleSaveCaption = async () => {
@@ -292,10 +335,12 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
     await fetch(`/api/private-photos/${editCaption.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ caption: editCaption.value }) })
     setEditCaption(null)
     await refreshCurrent()
+    toast.success('Légende enregistrée')
   }
 
   const handleMove = async (albumId: number | null) => {
     if (!moveModal) return
+    const count = moveModal.ids.length
     await Promise.all(moveModal.ids.map(id =>
       fetch(`/api/private-photos/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ album_id: albumId }) })
     ))
@@ -303,6 +348,7 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
     if (moveModal.ids.length > 1) setSelectedIds(new Set())
     await refreshCurrent()
     await refreshAlbums()
+    toast.success(count > 1 ? `${count} photos déplacées` : 'Photo déplacée')
   }
 
   const openShare = async (type: 'photo' | 'album', id: number, name: string, filename?: string) => {
@@ -310,8 +356,6 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
     setShareData(null)
     setSharePwd('')
     setShareUsePwd(false)
-    setShareCopied(false)
-    setHotlinkCopied(false)
     const r = await fetch(`/api/share?type=${type}&target_id=${id}`)
     const d = await r.json()
     setShareData(d)
@@ -327,7 +371,8 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
     })
     const d = await r.json()
     setShareLoading(false)
-    if (r.ok) setShareData({ shared: true, url: d.url, token: d.token, hasPassword: shareUsePwd && !!sharePwd })
+    if (r.ok) { setShareData({ shared: true, url: d.url, token: d.token, hasPassword: shareUsePwd && !!sharePwd }); toast.success('Lien de partage créé') }
+    else toast.error(d.error || 'Erreur lors de la création du lien')
   }
 
   const handleRevokeShare = async () => {
@@ -336,18 +381,19 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
     await fetch('/api/share', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: shareModal.type, target_id: shareModal.id }) })
     setShareLoading(false)
     setShareData({ shared: false })
+    toast.success('Lien de partage révoqué')
   }
 
   const copyShareLink = () => {
     if (!shareData?.url) return
     if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(shareData.url).then(() => { setShareCopied(true); setTimeout(() => setShareCopied(false), 1500) })
+      navigator.clipboard.writeText(shareData.url).then(() => toast.success('Lien copié'))
     }
   }
 
   const copyHotlink = (url: string) => {
     if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(url).then(() => { setHotlinkCopied(true); setTimeout(() => setHotlinkCopied(false), 1500) })
+      navigator.clipboard.writeText(url).then(() => toast.success('Lien copié'))
     }
   }
 
@@ -358,18 +404,23 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
       await fetch(`/api/private-photos/${deleteModal.id}`, { method: 'DELETE' })
       await refreshCurrent()
       await refreshAlbums()
+      toast.success('Photo supprimée')
     } else if (deleteModal.type === 'photos') {
+      const count = (deleteModal.ids || []).length
       await Promise.all((deleteModal.ids || []).map(id => fetch(`/api/private-photos/${id}`, { method: 'DELETE' })))
       setSelectedIds(new Set())
       await refreshCurrent()
       await refreshAlbums()
+      toast.success(`${count} photos supprimées`)
     } else if (deleteModal.type === 'leave-album') {
       await handleLeaveAlbum(deleteModal.id!)
+      toast.success('Album quitté')
     } else {
       await fetch(`/api/albums/${deleteModal.id}`, { method: 'DELETE' })
       if (selectedAlbum === deleteModal.id) setSelectedAlbum(null)
       await refreshAlbums()
       await refreshPhotos()
+      toast.success('Album supprimé')
     }
     setDeleting(false)
     setDeleteModal(null)
@@ -412,12 +463,14 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
     if (!r.ok) { setCollabError(d.error || 'Erreur'); return }
     setCollaborators(prev => [...prev, d])
     setCollabInput('')
+    toast.success('Co-éditeur invité')
   }
 
   const handleRemoveCollab = async (id: number) => {
     if (!collabModal) return
     setCollaborators(prev => prev.filter(c => c.id !== id))
     await fetch(`/api/albums/${collabModal.albumId}/collaborators/${id}`, { method: 'DELETE' })
+    toast.success('Co-éditeur retiré')
   }
 
   const handleDiscoverSearch = async () => {
@@ -441,6 +494,8 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
       const d = await r.json().catch(() => null)
       setDiscoverError(d?.error || 'Erreur lors de la demande')
       setDiscoverAlbums(prev => prev.map(a => a.id === albumId ? { ...a, access: null } : a))
+    } else {
+      toast.success('Demande envoyée')
     }
   }
 
@@ -599,8 +654,12 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
                       <button onClick={() => changeMediaView('albums')} style={{ display: 'flex', alignItems: 'center', gap: 6, background: mediaView === 'albums' ? 'var(--accent)' : 'transparent', color: mediaView === 'albums' ? '#0a0a0b' : 'var(--text-faint)', border: 'none', borderRadius: 5, padding: '6px 12px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}><IconFolder size={13} /> Albums</button>
                     </div>
                   )}
+                  {selectedAlbum !== null && (
+                    <a href={`/api/private-photos/export?album_id=${selectedAlbum}`} title="Télécharger cet album en .zip" style={{ ...S.btnGhost(), textDecoration: 'none' }}><IconDownload size={13} /> Exporter</a>
+                  )}
                   {selectedAlbum !== null && selectedAlbumObj?.role === 'owner' && (
                     <>
+                      <button onClick={() => selectedAlbumObj && handleToggleUnlisted(selectedAlbumObj)} title={selectedAlbumObj?.unlisted ? "Cet album n'apparaît pas dans la recherche" : 'Cet album est visible dans la recherche par pseudo'} style={S.btnGhost()}><IconLock size={13} /> {selectedAlbumObj?.unlisted ? 'Non listé' : 'Listé'}</button>
                       <button onClick={() => openCollab(selectedAlbum, selectedAlbumObj?.name || '')} style={S.btnGhost()}><IconUsers size={13} /> Collaborateurs</button>
                       <button onClick={() => openShare('album', selectedAlbum, selectedAlbumObj?.name || '')} style={S.btnGhost()}><IconLink size={13} /> Partager l'album</button>
                       <button onClick={() => setDeleteModal({ type: 'album', id: selectedAlbum, name: selectedAlbumObj?.name || '' })} style={S.btnGhost(true)}><IconTrash size={13} /> Supprimer</button>
@@ -622,8 +681,13 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
               </div>
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 14 }}>
-                {[...ownedAlbums, ...sharedAlbums].map(a => (
-                  <div key={a.id} onClick={() => openAlbumFromGrid(a.id)} style={{ cursor: 'pointer', borderRadius: 'var(--radius-md)', overflow: 'hidden', border: '1px solid var(--border)', background: 'var(--bg-card)' }}>
+                {[...ownedAlbums, ...sharedAlbums].map((a, idx) => (
+                  <motion.div
+                    key={a.id}
+                    initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.2, delay: Math.min(idx, 12) * 0.03 }}
+                    onClick={() => openAlbumFromGrid(a.id)} style={{ cursor: 'pointer', borderRadius: 'var(--radius-md)', overflow: 'hidden', border: '1px solid var(--border)', background: 'var(--bg-card)' }}
+                  >
                     <div style={{ aspectRatio: '1 / 1', background: 'var(--bg-elevated)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       {albumCover(a.id)
                         ? <img src={albumCover(a.id)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -633,7 +697,7 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
                       <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</div>
                       <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>{a.photo_count} photo{a.photo_count !== 1 ? 's' : ''}{a.role === 'collaborator' && a.owner_name ? ` · ${a.owner_name}` : ''}</div>
                     </div>
-                  </div>
+                  </motion.div>
                 ))}
               </div>
             )
@@ -688,12 +752,17 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
 
       {/* Lightbox */}
       {cur && lightbox !== null && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.96)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setLightbox(null)}>
+        <motion.div {...overlayMotion} style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.96)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setLightbox(null)}>
           <button onClick={() => setLightbox(null)} style={{ position: 'absolute', top: 14, right: 14, background: 'rgba(255,255,255,0.08)', border: 'none', borderRadius: '50%', width: 38, height: 38, color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2 }}><IconClose size={16} /></button>
           <div style={{ position: 'absolute', top: 18, left: '50%', transform: 'translateX(-50%)', background: 'rgba(0,0,0,0.5)', borderRadius: 20, padding: '3px 12px', fontSize: 11, color: '#888', zIndex: 2 }}>{lightbox + 1} / {visiblePhotos.length}</div>
           {lightbox > 0 && <button onClick={e => { e.stopPropagation(); setLightbox(lightbox - 1) }} style={{ position: 'absolute', left: 14, background: 'rgba(255,255,255,0.08)', border: 'none', borderRadius: '50%', width: 44, height: 44, color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2 }}><IconChevronLeft size={22} /></button>}
           {lightbox < visiblePhotos.length - 1 && <button onClick={e => { e.stopPropagation(); setLightbox(lightbox + 1) }} style={{ position: 'absolute', right: 14, background: 'rgba(255,255,255,0.08)', border: 'none', borderRadius: '50%', width: 44, height: 44, color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2 }}><IconChevronRight size={22} /></button>}
-          <img src={cur.url} alt={cur.caption || ''} onClick={e => e.stopPropagation()} style={{ maxWidth: 'calc(100vw - 110px)', maxHeight: 'calc(100vh - 110px)', objectFit: 'contain', borderRadius: 4 }} />
+          <motion.img
+            key={cur.id}
+            initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.15 }}
+            src={cur.url} alt={cur.caption || ''} onClick={e => e.stopPropagation()}
+            style={{ maxWidth: 'calc(100vw - 110px)', maxHeight: 'calc(100vh - 110px)', objectFit: 'contain', borderRadius: 4 }}
+          />
           <div onClick={e => e.stopPropagation()} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '16px 20px', background: 'linear-gradient(transparent, rgba(0,0,0,0.85))', display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: 2 }}>
             <div>
               <div style={{ color: '#fff', fontSize: 13, fontWeight: 600 }}>{cur.caption || cur.original_name}</div>
@@ -716,13 +785,13 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
               <button onClick={() => { setDeleteModal({ type: 'photo', id: cur.id, name: cur.original_name || 'cette photo' }); setLightbox(null) }} style={{ background: 'rgba(240,88,107,0.15)', border: '1px solid rgba(240,88,107,0.25)', borderRadius: 6, padding: '7px 13px', color: 'var(--danger)', fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}><IconTrash size={12} /> Supprimer</button>
             </div>
           </div>
-        </div>
+        </motion.div>
       )}
 
       {/* Upload modal */}
       {showUpload && (
-        <div style={S.modal} onClick={() => { if (!uploading) { setShowUpload(false); setUploadFiles([]) } }}>
-          <div style={S.card} onClick={e => e.stopPropagation()}>
+        <motion.div {...overlayMotion} style={S.modal} onClick={() => { if (!uploading) { setShowUpload(false); setUploadFiles([]) } }}>
+          <motion.div {...cardMotion} style={S.card} onClick={e => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
               <h2 style={{ color: 'var(--text)', fontSize: 16, fontWeight: 600 }}>Ajouter des photos</h2>
               <button onClick={() => { setShowUpload(false); setUploadFiles([]) }} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', display: 'flex' }}><IconClose size={18} /></button>
@@ -743,14 +812,14 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
             </div>
             {uploadError && <p style={{ fontSize: 12, color: 'var(--danger)', marginBottom: 12 }}>{uploadError}</p>}
             <button onClick={() => handleUpload()} disabled={!uploadFiles.length || uploading} style={{ ...S.btn(!!uploadFiles.length && !uploading), width: '100%', justifyContent: 'center', padding: '11px' }}>{uploading ? 'Envoi…' : 'Envoyer'}</button>
-          </div>
-        </div>
+          </motion.div>
+        </motion.div>
       )}
 
       {/* Duplicate photos confirmation modal */}
       {duplicateModal && (
-        <div style={S.modal} onClick={() => { if (!uploading) setDuplicateModal(null) }}>
-          <div style={{ ...S.card, maxWidth: 420 }} onClick={e => e.stopPropagation()}>
+        <motion.div {...overlayMotion} style={S.modal} onClick={() => { if (!uploading) setDuplicateModal(null) }}>
+          <motion.div {...cardMotion} style={{ ...S.card, maxWidth: 420 }} onClick={e => e.stopPropagation()}>
             <h2 style={{ color: 'var(--text)', fontSize: 16, fontWeight: 600, marginBottom: 6 }}>
               {duplicateModal.duplicates.length > 1 ? `${duplicateModal.duplicates.length} photos déjà présentes` : 'Photo déjà présente'}
             </h2>
@@ -775,25 +844,25 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
               <button onClick={handleUploadAnyway} disabled={uploading} style={{ ...S.btnGhost(), width: '100%', justifyContent: 'center' }}>{uploading ? 'Envoi…' : 'Envoyer quand même'}</button>
               <button onClick={() => setDuplicateModal(null)} disabled={uploading} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', fontSize: 12, cursor: 'pointer', padding: '4px' }}>Annuler</button>
             </div>
-          </div>
-        </div>
+          </motion.div>
+        </motion.div>
       )}
 
       {/* New album modal */}
       {showNewAlbum && (
-        <div style={S.modal} onClick={() => setShowNewAlbum(false)}>
-          <div style={{ ...S.card, maxWidth: 360 }} onClick={e => e.stopPropagation()}>
+        <motion.div {...overlayMotion} style={S.modal} onClick={() => setShowNewAlbum(false)}>
+          <motion.div {...cardMotion} style={{ ...S.card, maxWidth: 360 }} onClick={e => e.stopPropagation()}>
             <h2 style={{ color: 'var(--text)', fontSize: 16, fontWeight: 600, marginBottom: 14 }}>Nouvel album</h2>
             <input value={newAlbumName} onChange={e => setNewAlbumName(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleCreateAlbum()} placeholder="Nom de l'album" style={{ ...S.input, marginBottom: 14 }} autoFocus />
             <button onClick={handleCreateAlbum} disabled={!newAlbumName.trim()} style={{ ...S.btn(!!newAlbumName.trim()), width: '100%', justifyContent: 'center' }}>Créer</button>
-          </div>
-        </div>
+          </motion.div>
+        </motion.div>
       )}
 
       {/* Discover album modal */}
       {showDiscover && (
-        <div style={S.modal} onClick={() => setShowDiscover(false)}>
-          <div style={{ ...S.card, maxWidth: 420 }} onClick={e => e.stopPropagation()}>
+        <motion.div {...overlayMotion} style={S.modal} onClick={() => setShowDiscover(false)}>
+          <motion.div {...cardMotion} style={{ ...S.card, maxWidth: 420 }} onClick={e => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
               <h2 style={{ color: 'var(--text)', fontSize: 16, fontWeight: 600 }}>Rechercher un album</h2>
               <button onClick={() => setShowDiscover(false)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', display: 'flex' }}><IconClose size={18} /></button>
@@ -835,14 +904,14 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
                 </div>
               ))}
             </div>
-          </div>
-        </div>
+          </motion.div>
+        </motion.div>
       )}
 
       {/* Profile modal */}
       {showProfile && (
-        <div style={S.modal} onClick={() => setShowProfile(false)}>
-          <div style={{ ...S.card, maxWidth: 400 }} onClick={e => e.stopPropagation()}>
+        <motion.div {...overlayMotion} style={S.modal} onClick={() => setShowProfile(false)}>
+          <motion.div {...cardMotion} style={{ ...S.card, maxWidth: 400 }} onClick={e => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
               <h2 style={{ color: 'var(--text)', fontSize: 16, fontWeight: 600 }}>Mon profil</h2>
               <button onClick={() => setShowProfile(false)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', display: 'flex' }}><IconClose size={18} /></button>
@@ -890,41 +959,78 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
                   </div>
                 </div>
 
+                {profile.photo_count > 0 && (
+                  <a href="/api/private-photos/export" style={{ ...S.btnGhost(), width: '100%', justifyContent: 'center', textDecoration: 'none', marginTop: 16 }}>
+                    <IconDownload size={13} /> Télécharger toutes mes photos (.zip)
+                  </a>
+                )}
+
+                <div style={{ marginTop: 20 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <span style={{ fontSize: 11, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Sessions actives</span>
+                    {sessions && sessions.filter(s => !s.current).length > 0 && (
+                      <button onClick={handleLogoutOthers} disabled={sessionsBusy} style={{ background: 'none', border: 'none', color: 'var(--danger)', fontSize: 11, cursor: 'pointer', padding: 0 }}>Déconnecter les autres</button>
+                    )}
+                  </div>
+                  {!sessions ? (
+                    <p style={{ fontSize: 12, color: 'var(--text-faint)' }}>Chargement…</p>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 160, overflowY: 'auto' }}>
+                      {sessions.map(s => (
+                        <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '8px 10px' }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 12.5, color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                              {describeUA(s.user_agent)}
+                              {s.current && <span style={{ fontSize: 10, color: 'var(--accent)', background: 'rgba(91,141,239,0.14)', borderRadius: 4, padding: '1px 6px' }}>cet appareil</span>}
+                            </div>
+                            <div style={{ fontSize: 10.5, color: 'var(--text-faint)', marginTop: 2 }}>
+                              Connecté le {new Date(s.created_at.replace(' ', 'T') + 'Z').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })}
+                            </div>
+                          </div>
+                          {!s.current && (
+                            <button onClick={() => handleDeleteSession(s.id)} title="Déconnecter" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', display: 'flex', padding: 4 }}><IconClose size={13} /></button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
                 <p style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 16 }}>
                   Membre depuis le {new Date(profile.member_since.replace(' ', 'T') + 'Z').toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}
                 </p>
               </>
             )}
-          </div>
-        </div>
+          </motion.div>
+        </motion.div>
       )}
 
       {/* Rename album modal */}
       {renameAlbum && (
-        <div style={S.modal} onClick={() => setRenameAlbum(null)}>
-          <div style={{ ...S.card, maxWidth: 360 }} onClick={e => e.stopPropagation()}>
+        <motion.div {...overlayMotion} style={S.modal} onClick={() => setRenameAlbum(null)}>
+          <motion.div {...cardMotion} style={{ ...S.card, maxWidth: 360 }} onClick={e => e.stopPropagation()}>
             <h2 style={{ color: 'var(--text)', fontSize: 16, fontWeight: 600, marginBottom: 14 }}>Renommer l'album</h2>
             <input value={renameAlbum.name} onChange={e => setRenameAlbum({ ...renameAlbum, name: e.target.value })} onKeyDown={e => e.key === 'Enter' && handleRenameAlbum()} style={{ ...S.input, marginBottom: 14 }} autoFocus />
             <button onClick={handleRenameAlbum} disabled={!renameAlbum.name.trim()} style={{ ...S.btn(!!renameAlbum.name.trim()), width: '100%', justifyContent: 'center' }}>Enregistrer</button>
-          </div>
-        </div>
+          </motion.div>
+        </motion.div>
       )}
 
       {/* Edit caption modal */}
       {editCaption && (
-        <div style={S.modal} onClick={() => setEditCaption(null)}>
-          <div style={{ ...S.card, maxWidth: 380 }} onClick={e => e.stopPropagation()}>
+        <motion.div {...overlayMotion} style={S.modal} onClick={() => setEditCaption(null)}>
+          <motion.div {...cardMotion} style={{ ...S.card, maxWidth: 380 }} onClick={e => e.stopPropagation()}>
             <h2 style={{ color: 'var(--text)', fontSize: 16, fontWeight: 600, marginBottom: 14 }}>Légende</h2>
             <input value={editCaption.value} onChange={e => setEditCaption({ ...editCaption, value: e.target.value })} onKeyDown={e => e.key === 'Enter' && handleSaveCaption()} placeholder="Légende de la photo" style={{ ...S.input, marginBottom: 14 }} autoFocus />
             <button onClick={handleSaveCaption} style={{ ...S.btn(), width: '100%', justifyContent: 'center' }}>Enregistrer</button>
-          </div>
-        </div>
+          </motion.div>
+        </motion.div>
       )}
 
       {/* Move modal */}
       {moveModal && (
-        <div style={S.modal} onClick={() => setMoveModal(null)}>
-          <div style={{ ...S.card, maxWidth: 360 }} onClick={e => e.stopPropagation()}>
+        <motion.div {...overlayMotion} style={S.modal} onClick={() => setMoveModal(null)}>
+          <motion.div {...cardMotion} style={{ ...S.card, maxWidth: 360 }} onClick={e => e.stopPropagation()}>
             <h2 style={{ color: 'var(--text)', fontSize: 16, fontWeight: 600, marginBottom: 14 }}>Déplacer {moveModal.ids.length > 1 ? `${moveModal.ids.length} photos` : 'vers'}</h2>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 240, overflowY: 'auto' }}>
               <button onClick={() => handleMove(null)} style={{ textAlign: 'left', background: moveModal.albumId === null ? 'rgba(91,141,239,0.12)' : 'transparent', color: moveModal.albumId === null ? 'var(--accent)' : 'var(--text-dim)', border: 'none', borderRadius: 'var(--radius-sm)', padding: '9px 12px', fontSize: 13, cursor: 'pointer' }}>Sans album</button>
@@ -932,14 +1038,14 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
                 <button key={a.id} onClick={() => handleMove(a.id)} style={{ textAlign: 'left', display: 'flex', alignItems: 'center', gap: 8, background: moveModal.albumId === a.id ? 'rgba(91,141,239,0.12)' : 'transparent', color: moveModal.albumId === a.id ? 'var(--accent)' : 'var(--text-dim)', border: 'none', borderRadius: 'var(--radius-sm)', padding: '9px 12px', fontSize: 13, cursor: 'pointer' }}><IconFolder size={13} /> {a.name}</button>
               ))}
             </div>
-          </div>
-        </div>
+          </motion.div>
+        </motion.div>
       )}
 
       {/* Share modal */}
       {shareModal && (
-        <div style={S.modal} onClick={() => setShareModal(null)}>
-          <div style={{ ...S.card, maxWidth: 420 }} onClick={e => e.stopPropagation()}>
+        <motion.div {...overlayMotion} style={S.modal} onClick={() => setShareModal(null)}>
+          <motion.div {...cardMotion} style={{ ...S.card, maxWidth: 420 }} onClick={e => e.stopPropagation()}>
             <h2 style={{ color: 'var(--text)', fontSize: 16, fontWeight: 600, marginBottom: 4 }}>Partager {shareModal.type === 'album' ? "l'album" : 'la photo'}</h2>
             <p style={{ color: 'var(--text-faint)', fontSize: 12, marginBottom: 16 }}>{shareModal.name}</p>
 
@@ -950,7 +1056,7 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
                 {shareData.shared && shareData.url && (
                   <div style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '10px 12px', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--accent-hover)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{shareData.url}</span>
-                    <button onClick={copyShareLink} style={{ background: 'var(--bg-elevated)', border: 'none', borderRadius: 5, padding: '5px 10px', color: 'var(--text-dim)', fontSize: 11, cursor: 'pointer', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 5 }}>{shareCopied ? <><IconCheck size={11} /> Copié</> : 'Copier'}</button>
+                    <button onClick={copyShareLink} style={{ background: 'var(--bg-elevated)', border: 'none', borderRadius: 5, padding: '5px 10px', color: 'var(--text-dim)', fontSize: 11, cursor: 'pointer', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 5 }}>Copier</button>
                   </div>
                 )}
 
@@ -963,7 +1069,7 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
                       <span style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--accent-hover)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {`https://picture.iodev.fr/i/${shareData.token}.${shareModal.filename.split('.').pop()}`}
                       </span>
-                      <button onClick={() => copyHotlink(`https://picture.iodev.fr/i/${shareData.token}.${shareModal.filename!.split('.').pop()}`)} style={{ background: 'var(--bg-elevated)', border: 'none', borderRadius: 5, padding: '5px 10px', color: 'var(--text-dim)', fontSize: 11, cursor: 'pointer', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 5 }}>{hotlinkCopied ? <><IconCheck size={11} /> Copié</> : 'Copier'}</button>
+                      <button onClick={() => copyHotlink(`https://picture.iodev.fr/i/${shareData.token}.${shareModal.filename!.split('.').pop()}`)} style={{ background: 'var(--bg-elevated)', border: 'none', borderRadius: 5, padding: '5px 10px', color: 'var(--text-dim)', fontSize: 11, cursor: 'pointer', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 5 }}>Copier</button>
                     </div>
                   </div>
                 )}
@@ -987,14 +1093,14 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
                 )}
               </>
             )}
-          </div>
-        </div>
+          </motion.div>
+        </motion.div>
       )}
 
       {/* Collaborators modal */}
       {collabModal && (
-        <div style={S.modal} onClick={() => setCollabModal(null)}>
-          <div style={{ ...S.card, maxWidth: 420 }} onClick={e => e.stopPropagation()}>
+        <motion.div {...overlayMotion} style={S.modal} onClick={() => setCollabModal(null)}>
+          <motion.div {...cardMotion} style={{ ...S.card, maxWidth: 420 }} onClick={e => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
               <h2 style={{ color: 'var(--text)', fontSize: 16, fontWeight: 600 }}>Co-éditeurs</h2>
               <button onClick={() => setCollabModal(null)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', display: 'flex' }}><IconClose size={18} /></button>
@@ -1044,14 +1150,14 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
                 </div>
               ))}
             </div>
-          </div>
-        </div>
+          </motion.div>
+        </motion.div>
       )}
 
       {/* Delete modal */}
       {deleteModal && (
-        <div style={S.modal} onClick={() => { if (!deleting) setDeleteModal(null) }}>
-          <div style={{ ...S.card, maxWidth: 380 }} onClick={e => e.stopPropagation()}>
+        <motion.div {...overlayMotion} style={S.modal} onClick={() => { if (!deleting) setDeleteModal(null) }}>
+          <motion.div {...cardMotion} style={{ ...S.card, maxWidth: 380 }} onClick={e => e.stopPropagation()}>
             <div style={{ textAlign: 'center', marginBottom: 20 }}>
               <div style={{ width: 44, height: 44, borderRadius: '50%', background: 'rgba(240,88,107,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px', color: 'var(--danger)' }}>
                 {deleteModal.type === 'leave-album' ? <IconLogout size={20} /> : <IconTrash size={20} />}
@@ -1067,8 +1173,8 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
               <button onClick={() => setDeleteModal(null)} style={{ flex: 1, background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '10px', color: 'var(--text-dim)', fontSize: 13, cursor: 'pointer' }}>Annuler</button>
               <button onClick={handleDelete} disabled={deleting} style={{ flex: 1, background: 'var(--danger)', border: 'none', borderRadius: 'var(--radius-sm)', padding: '10px', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>{deleting ? '…' : deleteModal.type === 'leave-album' ? 'Quitter' : 'Supprimer'}</button>
             </div>
-          </div>
-        </div>
+          </motion.div>
+        </motion.div>
       )}
     </>
   )

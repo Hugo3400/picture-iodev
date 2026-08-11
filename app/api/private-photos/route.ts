@@ -3,11 +3,13 @@ import { getSession } from '@/lib/session'
 import { getDb } from '@/lib/db'
 import { getAlbumAccess } from '@/lib/permissions'
 import { sniffImageExt } from '@/lib/imageSniff'
+import { scanBuffer } from '@/lib/antivirus'
 import { generateThumbnail } from '@/lib/thumbnail'
 import {
   MAX_PRIVATE_FILE_SIZE, MAX_PRIVATE_FILES_PER_REQUEST, PRIVATE_UPLOAD_BYTES_PER_HOUR,
   sumRecentUploadBytes,
 } from '@/lib/privateUploads'
+import { withErrorNotify } from '@/lib/errorNotify'
 import { mkdir, writeFile } from 'fs/promises'
 import { existsSync } from 'fs'
 import path from 'path'
@@ -15,7 +17,7 @@ import crypto from 'crypto'
 
 const STORAGE_DIR = path.join(process.cwd(), 'storage', 'private')
 
-export async function GET(req: NextRequest) {
+export const GET = withErrorNotify('GET', async (req: NextRequest) => {
   const user = await getSession()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
@@ -43,9 +45,9 @@ export async function GET(req: NextRequest) {
     thumbUrl: p.thumb_filename ? `/api/file/${p.id}?thumb=1` : `/api/file/${p.id}`,
   }))
   return NextResponse.json(photos)
-}
+})
 
-export async function POST(req: NextRequest) {
+export const POST = withErrorNotify('POST', async (req: NextRequest) => {
   const user = await getSession()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
@@ -80,6 +82,8 @@ export async function POST(req: NextRequest) {
     const bytes = Buffer.from(await file.arrayBuffer())
     const ext = sniffImageExt(bytes)
     if (!ext) continue
+    const scan = await scanBuffer(bytes)
+    if ('infected' in scan && scan.infected) continue
     const hash = crypto.createHash('sha256').update(bytes).digest('hex')
     prepared.push({ file, bytes, ext, hash })
   }
@@ -135,4 +139,4 @@ export async function POST(req: NextRequest) {
   }
 
   return NextResponse.json({ uploaded, skippedDuplicates: duplicateAction === 'skip_duplicates' ? duplicates.length : 0 })
-}
+})

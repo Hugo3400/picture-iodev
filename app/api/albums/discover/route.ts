@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
 
   const albums = db.prepare(
     `SELECT id, name, description, (SELECT COUNT(*) FROM photos p WHERE p.album_id = albums.id) AS photo_count
-     FROM albums WHERE user_id = ? ORDER BY created_at DESC`
+     FROM albums WHERE user_id = ? AND unlisted = 0 ORDER BY created_at DESC`
   ).all(target.id) as { id: number; name: string; description: string | null; photo_count: number }[]
 
   const pendingRows = db.prepare(

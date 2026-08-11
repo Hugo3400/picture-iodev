@@ -5,20 +5,28 @@
   "scripts": {
     "dev": "next dev -p 3004",
     "build": "next build",
-    "start": "next start -p 3004"
+    "start": "next start -p 3004",
+    "test": "vitest run"
   },
   "dependencies": {
+    "@types/archiver": "^6.0.4",
+    "archiver": "^7.0.1",
     "better-sqlite3": "^12.11.1",
+    "clamscan": "^2.4.0",
+    "framer-motion": "^12.42.2",
     "next": "^14.2.35",
     "react": "^18",
     "react-dom": "^18",
-    "sharp": "^0.35.3"
+    "sharp": "^0.35.3",
+    "sonner": "^2.0.7"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
+    "@types/clamscan": "^2.4.1",
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.10"
   }
 }

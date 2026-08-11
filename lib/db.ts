@@ -133,5 +133,32 @@ export function getDb(): Database.Database {
     db.exec('ALTER TABLE photos ADD COLUMN content_hash TEXT')
   }
 
+  const albumCols = db.prepare("PRAGMA table_info(albums)").all() as { name: string }[]
+  if (!albumCols.some(c => c.name === 'unlisted')) {
+    db.exec('ALTER TABLE albums ADD COLUMN unlisted INTEGER NOT NULL DEFAULT 0')
+  }
+
+  const sessionCols = db.prepare("PRAGMA table_info(sessions)").all() as { name: string }[]
+  if (!sessionCols.some(c => c.name === 'id')) {
+    // "token" (le secret lui-même) était la clé primaire : pour afficher une liste de
+    // sessions côté client sans jamais renvoyer les tokens des AUTRES sessions au
+    // navigateur, il faut un identifiant opaque (id auto-incrémenté) à exposer à la place.
+    db.exec(`
+      ALTER TABLE sessions RENAME TO sessions_old;
+      CREATE TABLE sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        token TEXT UNIQUE NOT NULL,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        user_agent TEXT
+      );
+      INSERT INTO sessions (token, user_id, expires_at)
+        SELECT token, user_id, expires_at FROM sessions_old;
+      DROP TABLE sessions_old;
+      CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+    `)
+  }
+
   return db
 }

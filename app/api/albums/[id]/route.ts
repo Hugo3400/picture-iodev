@@ -11,9 +11,13 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const album = db.prepare('SELECT * FROM albums WHERE id = ? AND user_id = ?').get(id, user.id)
   if (!album) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  const { name, description } = await req.json()
-  db.prepare("UPDATE albums SET name = COALESCE(?, name), description = ?, updated_at = datetime('now') WHERE id = ?")
-    .run(name?.trim() || null, description ?? null, id)
+  const { name, description, unlisted } = await req.json()
+  // COALESCE(?, col) : un champ omis (undefined -> null en param) laisse la valeur
+  // existante intacte au lieu de l'écraser (avant ce fix, chaque renommage effaçait
+  // silencieusement la description puisqu'elle n'est jamais envoyée par ce flux).
+  db.prepare(
+    "UPDATE albums SET name = COALESCE(?, name), description = COALESCE(?, description), unlisted = COALESCE(?, unlisted), updated_at = datetime('now') WHERE id = ?"
+  ).run(name?.trim() || null, description ?? null, typeof unlisted === 'boolean' ? (unlisted ? 1 : 0) : null, id)
 
   return NextResponse.json(db.prepare('SELECT * FROM albums WHERE id = ?').get(id))
 }
