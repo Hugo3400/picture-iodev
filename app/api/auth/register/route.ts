@@ -1,9 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getDb } from '@/lib/db'
 import { createSession, SESSION_COOKIE, TTL } from '@/lib/session'
-import { hashPassword, isValidEmail, isValidPassword } from '@/lib/auth'
+import {
+  hashPassword, isValidEmail, isValidPassword,
+  REGISTER_ATTEMPT_LIMIT, countRecentRegisterAttempts, recordRegisterAttempt,
+} from '@/lib/auth'
+import { getClientIp } from '@/lib/publicUploads'
 
 export async function POST(req: NextRequest) {
+  const db = getDb()
+  const ip = getClientIp(req)
+  if (countRecentRegisterAttempts(db, ip) >= REGISTER_ATTEMPT_LIMIT) {
+    return NextResponse.json({ error: 'Trop de tentatives, réessaie plus tard' }, { status: 429 })
+  }
+  recordRegisterAttempt(db, ip)
+
   const { email, password, name } = await req.json()
 
   if (!isValidEmail(email)) {
