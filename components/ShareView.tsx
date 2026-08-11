@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { Logo, IconLock, IconChevronLeft, IconChevronRight, IconClose } from './icons'
 
-interface SharedPhoto { id: number; caption: string | null; url: string }
+interface SharedPhoto { id: number; caption: string | null; url: string; thumbUrl: string }
 
 export default function ShareView({ token }: { token: string }) {
   const [loading, setLoading] = useState(true)
@@ -130,7 +130,7 @@ export default function ShareView({ token }: { token: string }) {
         <div className="masonry">
           {photos.map((p, idx) => (
             <div key={p.id} className="masonry-item" onClick={() => setLightbox(idx)}>
-              <img src={p.url} alt={p.caption || ''} loading="lazy" />
+              <img src={p.thumbUrl} alt={p.caption || ''} loading="lazy" />
               {p.caption && (
                 <div className="masonry-overlay">
                   <span style={{ fontSize: 11, color: '#fff', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>{p.caption}</span>

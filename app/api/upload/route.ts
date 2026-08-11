@@ -9,6 +9,7 @@ import {
 import { sniffImageExt } from '@/lib/imageSniff'
 import { scanBuffer } from '@/lib/antivirus'
 import { withErrorNotify } from '@/lib/errorNotify'
+import { generateThumbnail } from '@/lib/thumbnail'
 import path from 'path'
 
 export const dynamic = 'force-dynamic'
@@ -72,16 +73,25 @@ export const POST = withErrorNotify('POST', async (req: NextRequest) => {
     await mkdir(UPLOADS_DIR, { recursive: true })
   }
 
-  const uploaded: { filename: string; url: string; expiresAt: string | null }[] = []
+  const uploaded: { filename: string; url: string; thumbUrl?: string; expiresAt: string | null }[] = []
   for (const { file, bytes, ext } of withBytes) {
     const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
     await writeFile(path.join(UPLOADS_DIR, filename), bytes)
+
+    // Vignette utilisée uniquement pour l'aperçu 48x48 de l'historique côté client :
+    // sans elle, cet aperçu re-téléchargeait l'image en pleine résolution.
+    const thumbBuffer = await generateThumbnail(bytes)
+    let thumbFilename: string | null = null
+    if (thumbBuffer) {
+      thumbFilename = `${filename.replace(/\.[a-zA-Z0-9]+$/, '')}-thumb.webp`
+      await writeFile(path.join(UPLOADS_DIR, thumbFilename), thumbBuffer)
+    }
 
     db.prepare(
       'INSERT INTO public_uploads (filename, original_name, size, expires_at, ip) VALUES (?, ?, ?, ?, ?)'
     ).run(filename, file.name, bytes.byteLength, expiresAt, ip)
 
-    uploaded.push({ filename, url: `/uploads/${filename}`, expiresAt })
+    uploaded.push({ filename, url: `/uploads/${filename}`, thumbUrl: thumbFilename ? `/uploads/${thumbFilename}` : undefined, expiresAt })
   }
 
   return NextResponse.json({ uploaded })

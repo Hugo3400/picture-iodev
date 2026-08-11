@@ -66,7 +66,11 @@ export const GET = withErrorNotify('GET', async (req: NextRequest, { params }: {
     headers: {
       'Content-Type': MIME[ext] || 'application/octet-stream',
       'Content-Length': String(stat.size),
-      'Cache-Control': 'private, max-age=3600',
+      // Le contenu d'une photo ne change jamais une fois uploadé (l'id est stable,
+      // seuls la légende/l'album — hors de cette réponse — sont modifiables) :
+      // un cache long côté navigateur évite de re-télécharger la même image à
+      // chaque navigation dans la galerie.
+      'Cache-Control': 'private, max-age=31536000, immutable',
     },
   })
 })

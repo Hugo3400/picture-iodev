@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/session'
 import { getDb } from '@/lib/db'
-import { getAlbumAccess } from '@/lib/permissions'
 
 export async function GET(req: NextRequest) {
   const user = await getSession()
@@ -28,16 +27,27 @@ export async function GET(req: NextRequest) {
   ).all(user.id) as { album_id: number }[]
   const pendingSet = new Set(pendingRows.map(r => r.album_id))
 
-  const results = albums.map(a => {
-    const access = getAlbumAccess(db, a.id, user.id)
-    return {
-      id: a.id,
-      name: a.name,
-      description: a.description,
-      photoCount: a.photo_count,
-      access: access ?? (pendingSet.has(a.id) ? 'pending' : null),
-    }
-  })
+  // target.id !== user.id (vérifié plus haut) donc ces albums ne peuvent jamais
+  // appartenir à l'utilisateur courant : seul le statut "collaborateur" est
+  // possible, qu'on récupère en une seule requête au lieu d'un aller-retour
+  // getAlbumAccess() par album.
+  const albumIds = albums.map(a => a.id)
+  const collabSet = new Set<number>()
+  if (albumIds.length) {
+    const placeholders = albumIds.map(() => '?').join(',')
+    const collabRows = db.prepare(
+      `SELECT album_id FROM album_collaborators WHERE user_id = ? AND album_id IN (${placeholders})`
+    ).all(user.id, ...albumIds) as { album_id: number }[]
+    collabRows.forEach(r => collabSet.add(r.album_id))
+  }
+
+  const results = albums.map(a => ({
+    id: a.id,
+    name: a.name,
+    description: a.description,
+    photoCount: a.photo_count,
+    access: collabSet.has(a.id) ? 'collaborator' : (pendingSet.has(a.id) ? 'pending' : null),
+  }))
 
   return NextResponse.json({ user: { discord_name: target.discord_name, discord_avatar: target.discord_avatar }, albums: results })
 }
