@@ -82,7 +82,8 @@ export default async function AdminPage() {
     SELECT u.id, u.discord_name, u.discord_username, u.discord_avatar, u.created_at,
       (SELECT COUNT(*) FROM photos p WHERE p.user_id = u.id) AS photo_count,
       (SELECT COUNT(*) FROM albums a WHERE a.user_id = u.id) AS album_count,
-      (SELECT COUNT(*) FROM sessions s WHERE s.user_id = u.id AND datetime(s.expires_at) > datetime('now')) AS active_sessions
+      (SELECT COUNT(*) FROM sessions s WHERE s.user_id = u.id AND datetime(s.expires_at) > datetime('now')) AS active_sessions,
+      (SELECT MAX(s.created_at) FROM sessions s WHERE s.user_id = u.id) AS last_login
     FROM users u ORDER BY u.created_at DESC
   `).all()
 

@@ -3,6 +3,7 @@ import { getDb } from '@/lib/db'
 import { getSession } from '@/lib/session'
 import { verifyUnlock, unlockCookieName, isShareLinkExpired } from '@/lib/share'
 import { canEditPhoto } from '@/lib/permissions'
+import { isAdmin } from '@/lib/admin'
 import { createReadStream, existsSync, statSync } from 'fs'
 import { withErrorNotify } from '@/lib/errorNotify'
 import { Readable } from 'stream'
@@ -27,6 +28,10 @@ export const GET = withErrorNotify('GET', async (req: NextRequest, { params }: {
 
   const user = await getSession()
   if (user && canEditPhoto(db, photo, user.id)) allowed = true
+  // Le panel admin doit pouvoir afficher les vignettes/photos de n'importe quel
+  // utilisateur en lecture seule, sans en être propriétaire ni passer par un lien
+  // de partage.
+  if (user && isAdmin(user)) allowed = true
 
   const shareToken = req.nextUrl.searchParams.get('share')
   if (!allowed && shareToken) {
