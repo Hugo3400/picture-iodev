@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { toast } from 'sonner'
-import { Logo, IconLock, IconImage, IconClose, IconUpload, IconClock, IconLink, IconTrash } from './icons'
+import { Logo, IconLock, IconImage, IconClose, IconUpload, IconClock, IconLink, IconTrash, IconShield } from './icons'
 
 type ExpiryChoice = '1h' | '24h' | '7d' | '30d' | 'never'
 
@@ -47,7 +47,7 @@ const fmtExpiry = (iso: string | null) => {
   return `Expire le ${new Date(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })} à ${new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`
 }
 
-export default function ImageHost() {
+export default function ImageHost({ isAdmin }: { isAdmin?: boolean } = {}) {
   const [files, setFiles] = useState<File[]>([])
   const [expiry, setExpiry] = useState<ExpiryChoice>('24h')
   const [uploading, setUploading] = useState(false)
@@ -134,12 +134,23 @@ export default function ImageHost() {
           <Logo size={22} />
           <span style={{ fontWeight: 600, fontSize: 16, color: 'var(--text)', letterSpacing: '-0.3px' }}>Picture</span>
         </div>
-        <a
-          href="/prive"
-          style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 600, color: 'var(--text)', textDecoration: 'none', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '8px 14px', transition: 'border-color 0.15s' }}
-        >
-          <IconLock size={13} /> Espace privé
-        </a>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {isAdmin && (
+            <a
+              href="/admin"
+              title="Panel admin"
+              style={{ display: 'flex', alignItems: 'center', color: 'var(--text-faint)', textDecoration: 'none', padding: 6 }}
+            >
+              <IconShield size={15} />
+            </a>
+          )}
+          <a
+            href="/prive"
+            style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 600, color: 'var(--text)', textDecoration: 'none', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '8px 14px', transition: 'border-color 0.15s' }}
+          >
+            <IconLock size={13} /> Espace privé
+          </a>
+        </div>
       </header>
 
       {/* ── Main ── */}
