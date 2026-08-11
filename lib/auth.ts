@@ -48,3 +48,22 @@ export function recordFailedLoginAttempt(db: Database.Database, ip: string): voi
   db.prepare('INSERT INTO login_attempts (ip) VALUES (?)').run(ip)
   db.prepare(`DELETE FROM login_attempts WHERE created_at < datetime('now', ?)`).run(loginWindowModifier)
 }
+
+// Fenêtre plus large que le login (1h vs 15 min) : la création de compte est un
+// événement rare pour un utilisateur légitime, contrairement aux tentatives de
+// connexion — pas besoin d'un délai aussi court pour freiner le spam de comptes.
+export const REGISTER_ATTEMPT_LIMIT = 5
+export const REGISTER_ATTEMPT_WINDOW_MS = 60 * 60 * 1000
+const registerWindowModifier = `-${Math.round(REGISTER_ATTEMPT_WINDOW_MS / 1000)} seconds`
+
+export function countRecentRegisterAttempts(db: Database.Database, ip: string): number {
+  const row = db.prepare(
+    `SELECT COUNT(*) AS n FROM register_attempts WHERE ip = ? AND created_at >= datetime('now', ?)`
+  ).get(ip, registerWindowModifier) as { n: number }
+  return row.n
+}
+
+export function recordRegisterAttempt(db: Database.Database, ip: string): void {
+  db.prepare('INSERT INTO register_attempts (ip) VALUES (?)').run(ip)
+  db.prepare(`DELETE FROM register_attempts WHERE created_at < datetime('now', ?)`).run(registerWindowModifier)
+}

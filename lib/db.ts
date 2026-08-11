@@ -153,6 +153,13 @@ export function getDb(): Database.Database {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_login_attempts_lookup ON login_attempts(ip, created_at);
+
+    CREATE TABLE IF NOT EXISTS register_attempts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ip TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_register_attempts_lookup ON register_attempts(ip, created_at);
   `)
 
   const publicUploadCols = db.prepare("PRAGMA table_info(public_uploads)").all() as { name: string }[]
