@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Logo, IconLock, IconChevronLeft, IconChevronRight, IconClose } from './icons'
+import { Logo, IconLock, IconClock, IconChevronLeft, IconChevronRight, IconClose } from './icons'
 
 interface SharedPhoto { id: number; caption: string | null; url: string; thumbUrl: string }
 
@@ -11,6 +11,7 @@ export default function ShareView({ token }: { token: string }) {
   const [pwd, setPwd] = useState('')
   const [pwdError, setPwdError] = useState('')
   const [error, setError] = useState('')
+  const [expired, setExpired] = useState(false)
   const [type, setType] = useState<'photo' | 'album' | null>(null)
   const [albumInfo, setAlbumInfo] = useState<{ name: string; description: string | null } | null>(null)
   const [photos, setPhotos] = useState<SharedPhoto[]>([])
@@ -24,7 +25,7 @@ export default function ShareView({ token }: { token: string }) {
     const r = await fetch(`/api/share/${token}`)
     const d = await r.json()
     setLoading(false)
-    if (!r.ok) { setError(d.error || 'Erreur'); return }
+    if (!r.ok) { setError(d.error || 'Erreur'); setExpired(!!d.expired); return }
     if (d.requiresPassword) { setNeedsPassword(true); return }
     setNeedsPassword(false)
     setType(d.type)
@@ -62,7 +63,7 @@ export default function ShareView({ token }: { token: string }) {
 
   if (error) {
     return <div style={{ minHeight: '100vh', background: 'var(--bg)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14 }}>
-      <IconLock size={34} style={{ color: 'var(--text-faint)' }} />
+      {expired ? <IconClock size={34} style={{ color: 'var(--text-faint)' }} /> : <IconLock size={34} style={{ color: 'var(--text-faint)' }} />}
       <p style={{ color: 'var(--text-dim)', fontSize: 14 }}>{error}</p>
     </div>
   }

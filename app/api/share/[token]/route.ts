@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getDb } from '@/lib/db'
-import { verifyUnlock, unlockCookieName } from '@/lib/share'
+import { verifyUnlock, unlockCookieName, isShareLinkExpired } from '@/lib/share'
 import { getSession } from '@/lib/session'
 import { getAlbumAccess } from '@/lib/permissions'
 
@@ -14,6 +14,9 @@ export async function GET(req: NextRequest, { params }: { params: { token: strin
   const db = getDb()
   const link = db.prepare('SELECT * FROM share_links WHERE token = ?').get(params.token) as any
   if (!link) return NextResponse.json({ error: 'Lien introuvable' }, { status: 404 })
+  // 410 Gone plutôt que 404 : le lien a bien existé, il faut permettre au front
+  // d'afficher "ce lien a expiré" plutôt que "lien introuvable".
+  if (isShareLinkExpired(link)) return NextResponse.json({ error: 'Ce lien a expiré', expired: true }, { status: 410 })
 
   const unlocked = !link.password_hash || verifyUnlock(params.token, req.cookies.get(unlockCookieName(params.token))?.value)
   if (!unlocked) {

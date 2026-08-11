@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getDb } from '@/lib/db'
-import { verifyUnlock, unlockCookieName } from '@/lib/share'
+import { verifyUnlock, unlockCookieName, isShareLinkExpired } from '@/lib/share'
 import { createReadStream, existsSync, statSync } from 'fs'
 import path from 'path'
 
@@ -17,6 +17,9 @@ export async function GET(req: NextRequest, { params }: { params: { token: strin
   const db = getDb()
   const link = db.prepare("SELECT * FROM share_links WHERE token = ? AND type = 'photo'").get(token) as any
   if (!link) return NextResponse.json({ error: 'Lien introuvable' }, { status: 404 })
+  // Le hotlink expose le fichier directement (embed/img src) : il doit s'éteindre
+  // en même temps que le lien de partage, pas rester accessible indéfiniment.
+  if (isShareLinkExpired(link)) return NextResponse.json({ error: 'Lien expiré' }, { status: 410 })
 
   if (link.password_hash) {
     const cookieVal = req.cookies.get(unlockCookieName(token))?.value

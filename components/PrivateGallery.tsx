@@ -3,7 +3,22 @@
 import { useState, useRef, useEffect } from 'react'
 import { toast } from 'sonner'
 import { motion } from 'framer-motion'
-import { Logo, IconLock, IconImage, IconTrash, IconEdit, IconFolder, IconLink, IconClose, IconChevronLeft, IconChevronRight, IconCheck, IconUpload, IconGrid, IconUsers, IconDownload, IconBell, IconSearch, IconLogout } from './icons'
+import { Logo, IconLock, IconImage, IconTrash, IconEdit, IconFolder, IconLink, IconClose, IconChevronLeft, IconChevronRight, IconCheck, IconUpload, IconGrid, IconUsers, IconDownload, IconBell, IconSearch, IconLogout, IconClock } from './icons'
+
+type ExpiryChoice = '1h' | '24h' | '7d' | '30d' | 'never'
+
+const EXPIRY_OPTIONS: { value: ExpiryChoice; label: string }[] = [
+  { value: '1h', label: '1 heure' },
+  { value: '24h', label: '24 heures' },
+  { value: '7d', label: '7 jours' },
+  { value: '30d', label: '30 jours' },
+  { value: 'never', label: 'Jamais' },
+]
+
+const fmtExpiry = (iso: string | null) => {
+  if (!iso) return "N'expire jamais"
+  return `Expire le ${new Date(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })} à ${new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`
+}
 
 interface Album { id: number; name: string; description: string | null; photo_count: number; created_at: string; role: 'owner' | 'collaborator'; owner_name?: string; unlisted: number }
 interface Photo { id: number; user_id: number; album_id: number | null; filename: string; original_name: string | null; caption: string | null; size: number; created_at: string; url: string; thumbUrl: string; uploader_name?: string | null; uploader_avatar?: string | null }
@@ -72,9 +87,10 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
   const [lastSelectedIdx, setLastSelectedIdx] = useState<number | null>(null)
 
   const [shareModal, setShareModal] = useState<{ type: 'photo' | 'album'; id: number; name: string; filename?: string } | null>(null)
-  const [shareData, setShareData] = useState<{ shared: boolean; url?: string; token?: string; hasPassword?: boolean; viewCount?: number } | null>(null)
+  const [shareData, setShareData] = useState<{ shared: boolean; url?: string; token?: string; hasPassword?: boolean; viewCount?: number; expiresAt?: string | null } | null>(null)
   const [sharePwd, setSharePwd] = useState('')
   const [shareUsePwd, setShareUsePwd] = useState(false)
+  const [shareExpiry, setShareExpiry] = useState<ExpiryChoice>('never')
   const [shareLoading, setShareLoading] = useState(false)
 
   const [deleteModal, setDeleteModal] = useState<{ type: 'photo' | 'album' | 'photos' | 'leave-album'; id?: number; ids?: number[]; name: string } | null>(null)
@@ -356,6 +372,7 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
     setShareData(null)
     setSharePwd('')
     setShareUsePwd(false)
+    setShareExpiry('never')
     const r = await fetch(`/api/share?type=${type}&target_id=${id}`)
     const d = await r.json()
     setShareData(d)
@@ -367,11 +384,11 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
     setShareLoading(true)
     const r = await fetch('/api/share', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: shareModal.type, target_id: shareModal.id, password: shareUsePwd ? sharePwd : undefined }),
+      body: JSON.stringify({ type: shareModal.type, target_id: shareModal.id, password: shareUsePwd ? sharePwd : undefined, expires_in: shareExpiry }),
     })
     const d = await r.json()
     setShareLoading(false)
-    if (r.ok) { setShareData({ shared: true, url: d.url, token: d.token, hasPassword: shareUsePwd && !!sharePwd }); toast.success('Lien de partage créé') }
+    if (r.ok) { setShareData({ shared: true, url: d.url, token: d.token, hasPassword: shareUsePwd && !!sharePwd, expiresAt: d.expiresAt }); toast.success('Lien de partage créé') }
     else toast.error(d.error || 'Erreur lors de la création du lien')
   }
 
@@ -1072,6 +1089,29 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
                       <button onClick={() => copyHotlink(`https://picture.iodev.fr/i/${shareData.token}.${shareModal.filename!.split('.').pop()}`)} style={{ background: 'var(--bg-elevated)', border: 'none', borderRadius: 5, padding: '5px 10px', color: 'var(--text-dim)', fontSize: 11, cursor: 'pointer', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 5 }}>Copier</button>
                     </div>
                   </div>
+                )}
+
+                <label style={{ fontSize: 12, color: 'var(--text-dim)', display: 'block', marginBottom: 8 }}>Expiration du lien</label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
+                  {EXPIRY_OPTIONS.map(opt => (
+                    <button
+                      key={opt.value}
+                      onClick={() => setShareExpiry(opt.value)}
+                      style={{
+                        flex: '1 1 auto', minWidth: 62, background: shareExpiry === opt.value ? 'rgba(91,141,239,0.14)' : 'var(--bg)',
+                        border: `1px solid ${shareExpiry === opt.value ? 'var(--accent)' : 'var(--border)'}`,
+                        color: shareExpiry === opt.value ? 'var(--accent)' : 'var(--text-dim)',
+                        borderRadius: 'var(--radius-sm)', padding: '7px 8px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer', transition: 'all 0.15s',
+                      }}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                {shareData.shared && (
+                  <p style={{ fontSize: 11, color: 'var(--text-faint)', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 5 }}>
+                    <IconClock size={11} /> Actuellement : {fmtExpiry(shareData.expiresAt ?? null)}
+                  </p>
                 )}
 
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, cursor: 'pointer' }}>
