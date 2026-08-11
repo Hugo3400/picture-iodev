@@ -53,6 +53,7 @@ interface ShareLink {
   created_at: string
   has_password: number
   target_name: string | null
+  owner_name: string | null
 }
 
 type Tab = 'overview' | 'users' | 'uploads' | 'security' | 'links'
@@ -70,6 +71,38 @@ const fmtBytes = (b: number) => {
 }
 
 const fmtDate = (iso: string) => new Date(iso.includes('T') ? iso : iso + 'Z').toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' })
+
+type SortDir = 'asc' | 'desc'
+type SortState = { key: string; dir: SortDir }
+
+// Trie générique par colonne : chaque table fournit ses propres accesseurs (getters)
+// car certaines colonnes affichées sont dérivées (ex: nom d'origine avec repli sur
+// le nom de fichier) plutôt que des champs bruts de la ligne.
+function sortRows<T>(rows: T[], sort: SortState, getters: Record<string, (row: T) => string | number | null>): T[] {
+  const get = getters[sort.key]
+  if (!get) return rows
+  const sorted = [...rows].sort((a, b) => {
+    const av = get(a); const bv = get(b)
+    if (av == null && bv == null) return 0
+    if (av == null) return 1
+    if (bv == null) return -1
+    if (typeof av === 'number' && typeof bv === 'number') return av - bv
+    return String(av).localeCompare(String(bv), 'fr')
+  })
+  return sort.dir === 'asc' ? sorted : sorted.reverse()
+}
+
+function SortTh({ label, sortKey, sort, onSort }: { label: string; sortKey: string; sort: SortState; onSort: (s: SortState) => void }) {
+  const active = sort.key === sortKey
+  return (
+    <th
+      style={{ ...S.th, cursor: 'pointer', userSelect: 'none' }}
+      onClick={() => onSort({ key: sortKey, dir: active && sort.dir === 'asc' ? 'desc' : 'asc' })}
+    >
+      {label}{active && (sort.dir === 'asc' ? ' ▲' : ' ▼')}
+    </th>
+  )
+}
 
 const S = {
   card: { background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: 20 } as React.CSSProperties,
@@ -103,7 +136,12 @@ export default function AdminPanel({
   const [uploads, setUploads] = useState(initialPublicUploads)
   const [links, setLinks] = useState(initialShareLinks)
   const [confirm, setConfirm] = useState<ConfirmAction | null>(null)
+  const [preview, setPreview] = useState<{ url: string; label: string } | null>(null)
   const [busy, setBusy] = useState(false)
+  const [usersSort, setUsersSort] = useState<SortState>({ key: 'created_at', dir: 'desc' })
+  const [uploadsSort, setUploadsSort] = useState<SortState>({ key: 'created_at', dir: 'desc' })
+  const [securitySort, setSecuritySort] = useState<SortState>({ key: 'attempts', dir: 'desc' })
+  const [linksSort, setLinksSort] = useState<SortState>({ key: 'created_at', dir: 'desc' })
 
   const runConfirm = async () => {
     if (!confirm) return
@@ -266,8 +304,18 @@ export default function AdminPanel({
               <tbody>
                 {uploads.map(u => (
                   <tr key={u.id}>
-                    <td style={{ ...S.td, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      <a href={`/uploads/${u.filename}`} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)', textDecoration: 'none' }}>{u.original_name || u.filename}</a>
+                    <td style={{ ...S.td, maxWidth: 280 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <img
+                          src={`/uploads/${u.filename}`} alt="" loading="lazy"
+                          onClick={() => setPreview({ url: `/uploads/${u.filename}`, label: u.original_name || u.filename })}
+                          style={{ width: 36, height: 36, borderRadius: 'var(--radius-sm)', objectFit: 'cover', flexShrink: 0, cursor: 'pointer', border: '1px solid var(--border)' }}
+                        />
+                        <a
+                          href={`/uploads/${u.filename}`} target="_blank" rel="noreferrer"
+                          style={{ color: 'var(--accent)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                        >{u.original_name || u.filename}</a>
+                      </div>
                     </td>
                     <td style={S.td}>{fmtBytes(u.size)}</td>
                     <td style={S.td}>{u.ip || '—'}</td>
@@ -367,6 +415,14 @@ export default function AdminPanel({
               <button onClick={runConfirm} disabled={busy} style={{ flex: 1, background: 'var(--danger)', border: 'none', borderRadius: 'var(--radius-sm)', padding: '10px', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>{busy ? '…' : 'Confirmer'}</button>
             </div>
           </div>
+        </div>
+      )}
+
+      {preview && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 400, background: 'rgba(0,0,0,0.9)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24 }} onClick={() => setPreview(null)}>
+          <button onClick={() => setPreview(null)} style={{ position: 'absolute', top: 14, right: 14, background: 'rgba(255,255,255,0.08)', border: 'none', borderRadius: '50%', width: 38, height: 38, color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><IconClose size={16} /></button>
+          <img src={preview.url} alt={preview.label} onClick={e => e.stopPropagation()} style={{ maxWidth: '100%', maxHeight: 'calc(100vh - 120px)', objectFit: 'contain', borderRadius: 4 }} />
+          <span style={{ marginTop: 14, fontSize: 12, color: 'var(--text-faint)', wordBreak: 'break-all', textAlign: 'center' }}>{preview.label}</span>
         </div>
       )}
     </>

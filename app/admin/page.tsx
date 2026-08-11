@@ -103,7 +103,9 @@ export default async function AdminPage() {
     SELECT sl.id, sl.token, sl.type, sl.target_id, sl.view_count, sl.created_at,
       CASE WHEN sl.password_hash IS NULL THEN 0 ELSE 1 END AS has_password,
       CASE WHEN sl.type = 'photo' THEN (SELECT original_name FROM photos WHERE id = sl.target_id)
-           ELSE (SELECT name FROM albums WHERE id = sl.target_id) END AS target_name
+           ELSE (SELECT name FROM albums WHERE id = sl.target_id) END AS target_name,
+      CASE WHEN sl.type = 'photo' THEN (SELECT u.discord_name FROM photos p JOIN users u ON u.id = p.user_id WHERE p.id = sl.target_id)
+           ELSE (SELECT u.discord_name FROM albums a JOIN users u ON u.id = a.user_id WHERE a.id = sl.target_id) END AS owner_name
     FROM share_links sl ORDER BY sl.created_at DESC
   `).all()
 
