@@ -13,6 +13,7 @@ const STORAGE_DIR = path.join(process.cwd(), 'storage', 'private')
 
 export default async function AdminPage() {
   const user = await getSession()
+  const telegramBotUsername = process.env.TELEGRAM_BOT_USERNAME
 
   if (!user) {
     return (
@@ -35,6 +36,26 @@ export default async function AdminPage() {
           </div>
 
           <LoginForm />
+
+          {telegramBotUsername && (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '20px 0' }}>
+                <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+                <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>ou</span>
+                <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'center' }}>
+                <script
+                  async
+                  src="https://telegram.org/js/telegram-widget.js?22"
+                  data-telegram-login={telegramBotUsername}
+                  data-size="large"
+                  data-auth-url="https://picture.iodev.fr/api/auth/telegram/callback?redirect=/admin"
+                  data-request-access="write"
+                />
+              </div>
+            </>
+          )}
 
           <div style={{ marginTop: 22 }}>
             <a href="/" style={{ fontSize: 12, color: 'var(--text-faint)', textDecoration: 'none' }}>← Retour à la galerie publique</a>
