@@ -17,14 +17,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const photo = db.prepare('SELECT * FROM photos WHERE id = ?').get(id) as any
   if (!photo || !canEditPhoto(db, photo, user.id)) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  const { caption, album_id } = await req.json()
+  const { caption, album_id, nsfw } = await req.json()
 
   if (album_id !== undefined && album_id !== null) {
     if (!getAlbumAccess(db, album_id, user.id)) return NextResponse.json({ error: 'Album invalide' }, { status: 400 })
   }
 
-  db.prepare('UPDATE photos SET caption = COALESCE(?, caption), album_id = ? WHERE id = ?')
-    .run(caption ?? null, album_id === undefined ? photo.album_id : album_id, id)
+  db.prepare('UPDATE photos SET caption = COALESCE(?, caption), album_id = ?, nsfw = COALESCE(?, nsfw) WHERE id = ?')
+    .run(caption ?? null, album_id === undefined ? photo.album_id : album_id, nsfw === undefined ? null : (nsfw ? 1 : 0), id)
 
   return NextResponse.json(db.prepare('SELECT * FROM photos WHERE id = ?').get(id))
 }

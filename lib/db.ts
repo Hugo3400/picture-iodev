@@ -174,6 +174,9 @@ export function getDb(): Database.Database {
   if (!photoCols.some(c => c.name === 'content_hash')) {
     db.exec('ALTER TABLE photos ADD COLUMN content_hash TEXT')
   }
+  if (!photoCols.some(c => c.name === 'nsfw')) {
+    db.exec('ALTER TABLE photos ADD COLUMN nsfw INTEGER NOT NULL DEFAULT 0')
+  }
 
   const albumCols = db.prepare("PRAGMA table_info(albums)").all() as { name: string }[]
   if (!albumCols.some(c => c.name === 'unlisted')) {
