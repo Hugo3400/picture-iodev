@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { toast } from 'sonner'
 import { motion } from 'framer-motion'
-import { Logo, IconLock, IconImage, IconTrash, IconEdit, IconFolder, IconLink, IconClose, IconChevronLeft, IconChevronRight, IconCheck, IconUpload, IconGrid, IconUsers, IconDownload, IconBell, IconSearch, IconLogout, IconClock, IconEyeOff, IconShield } from './icons'
+import { Logo, IconLock, IconImage, IconTrash, IconEdit, IconFolder, IconLink, IconClose, IconChevronLeft, IconChevronRight, IconCheck, IconUpload, IconGrid, IconUsers, IconDownload, IconBell, IconSearch, IconLogout, IconClock, IconEyeOff, IconShield, IconVideo, IconFileText, IconArchive } from './icons'
 
 type ExpiryChoice = '1h' | '24h' | '7d' | '30d' | 'never'
 
@@ -21,7 +21,9 @@ const fmtExpiry = (iso: string | null) => {
 }
 
 interface Album { id: number; name: string; description: string | null; photo_count: number; created_at: string; role: 'owner' | 'collaborator'; owner_name?: string; unlisted: number }
-interface Photo { id: number; user_id: number; album_id: number | null; filename: string; original_name: string | null; caption: string | null; size: number; created_at: string; url: string; thumbUrl: string; uploader_name?: string | null; uploader_avatar?: string | null; nsfw: number }
+interface Photo { id: number; user_id: number; album_id: number | null; filename: string; original_name: string | null; caption: string | null; size: number; created_at: string; url: string; thumbUrl: string; uploader_name?: string | null; uploader_avatar?: string | null; nsfw: number; file_type: 'image' | 'video' | 'text' | 'archive'; mime_type: string | null; processing_status: 'ready' | 'pending' | 'processing' | 'failed' }
+interface TextPreview { type: 'text'; content: string; truncated: boolean }
+interface ArchivePreview { type: 'archive'; entries: { name: string; size: number }[] }
 interface User { id: number; discord_id: string | null; discord_name: string; discord_avatar: string | null }
 interface Collaborator { id: number; invited_name: string; user_id: number | null; discord_name: string | null; discord_avatar: string | null; created_at: string }
 interface JoinRequest { id: number; user_id: number; discord_name: string; discord_avatar: string | null; created_at: string }
@@ -36,6 +38,14 @@ interface Profile {
 interface SessionInfo { id: number; created_at: string; expires_at: string; user_agent: string | null; current: boolean }
 
 const fmt = (b: number) => b < 1024 * 1024 ? `${(b / 1024).toFixed(0)} KB` : `${(b / 1024 / 1024).toFixed(1)} MB`
+
+// Le MIME type d'un .rar est peu fiable côté navigateur : on filtre aussi sur l'extension.
+const ACCEPTED_EXTENSIONS = ['.mp4', '.mov', '.webm', '.mkv', '.avi', '.txt', '.rar']
+const isAcceptedUploadFile = (f: File) => {
+  if (f.type.startsWith('image/') || f.type.startsWith('video/')) return true
+  const name = f.name.toLowerCase()
+  return ACCEPTED_EXTENSIONS.some(ext => name.endsWith(ext))
+}
 
 const describeUA = (ua: string | null) => {
   if (!ua) return 'Appareil inconnu'
@@ -57,6 +67,8 @@ export default function PrivateGallery({ user, isAdmin, initialAlbums, initialPh
   const [albumPhotos, setAlbumPhotos] = useState<Photo[]>([])
   const [selectedAlbum, setSelectedAlbum] = useState<number | null>(null)
   const [lightbox, setLightbox] = useState<number | null>(null)
+  const [preview, setPreview] = useState<TextPreview | ArchivePreview | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
   const [mediaView, setMediaView] = useState<'photos' | 'albums'>('photos')
   useEffect(() => {
     const saved = localStorage.getItem('mediaView')
@@ -239,6 +251,16 @@ export default function PrivateGallery({ user, isAdmin, initialAlbums, initialPh
 
   useEffect(() => { setSelectedIds(new Set()); setLastSelectedIdx(null); setSearchQuery('') }, [selectedAlbum])
 
+  // Les vidéos sont compressées de façon asynchrone côté serveur : tant qu'il en reste
+  // en file d'attente, on refetch périodiquement pour récupérer le statut à jour.
+  useEffect(() => {
+    const current = selectedAlbum === null ? photos : albumPhotos
+    const hasProcessing = current.some(p => p.file_type === 'video' && (p.processing_status === 'pending' || p.processing_status === 'processing'))
+    if (!hasProcessing) return
+    const interval = setInterval(() => { refreshCurrent() }, 6000)
+    return () => clearInterval(interval)
+  }, [photos, albumPhotos, selectedAlbum])
+
   useEffect(() => {
     if (!showUpload) return
     const onPaste = (e: ClipboardEvent) => {
@@ -304,6 +326,19 @@ export default function PrivateGallery({ user, isAdmin, initialAlbums, initialPh
     window.addEventListener('keydown', fn)
     return () => window.removeEventListener('keydown', fn)
   }, [lightbox, visiblePhotos.length])
+
+  useEffect(() => {
+    const p = lightbox !== null ? visiblePhotos[lightbox] : null
+    if (!p || (p.file_type !== 'text' && p.file_type !== 'archive')) { setPreview(null); setPreviewLoading(false); return }
+    let cancelled = false
+    setPreview(null)
+    setPreviewLoading(true)
+    fetch(`/api/private-photos/${p.id}/preview`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (!cancelled) { setPreview(d); setPreviewLoading(false) } })
+      .catch(() => { if (!cancelled) setPreviewLoading(false) })
+    return () => { cancelled = true }
+  }, [lightbox])
 
   const handleUpload = async (duplicateAction?: 'upload_anyway' | 'skip_duplicates') => {
     if (!uploadFiles.length || uploading) return
@@ -540,6 +575,47 @@ export default function PrivateGallery({ user, isAdmin, initialAlbums, initialPh
 
   const cur = lightbox !== null ? visiblePhotos[lightbox] : null
 
+  const videoStatusLabel = (p: Photo) => p.processing_status === 'failed' ? 'Échec du traitement' : 'Traitement en cours…'
+
+  // Rendu de la vignette dans la grille : image inchangée, vidéo avec poster + overlay ▶
+  // (ou statut de traitement tant que la version compressée n'est pas prête), texte/archive
+  // avec une icône générique. thumbUrl d'une vidéo n'est fiable qu'une fois processing_status === 'ready'.
+  const renderThumb = (p: Photo) => {
+    if (p.file_type === 'image') {
+      return (
+        <img
+          src={p.thumbUrl} alt={p.caption || ''} loading="lazy"
+          style={p.nsfw && !revealed.has(p.id) ? { filter: 'blur(24px)', transition: 'filter 0.2s' } : undefined}
+        />
+      )
+    }
+    if (p.file_type === 'video') {
+      const ready = p.processing_status === 'ready'
+      return (
+        <div style={{ width: '100%', aspectRatio: '1 / 1', background: 'var(--bg-elevated)', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          {ready
+            ? <img src={p.thumbUrl} alt={p.caption || ''} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            : <IconVideo size={28} style={{ color: 'var(--text-faint)' }} />}
+          {ready ? (
+            <div style={{ position: 'absolute', width: 38, height: 38, borderRadius: '50%', background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <div style={{ width: 0, height: 0, borderTop: '7px solid transparent', borderBottom: '7px solid transparent', borderLeft: '11px solid #fff', marginLeft: 3 }} />
+            </div>
+          ) : (
+            <div style={{ position: 'absolute', bottom: 8, left: 8, right: 8, textAlign: 'center', fontSize: 10.5, fontWeight: 600, padding: '4px 6px', borderRadius: 6, background: 'rgba(0,0,0,0.55)', color: p.processing_status === 'failed' ? 'var(--danger)' : '#ddd' }}>
+              {videoStatusLabel(p)}
+            </div>
+          )}
+        </div>
+      )
+    }
+    return (
+      <div style={{ width: '100%', aspectRatio: '1 / 1', background: 'var(--bg-elevated)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 10 }}>
+        {p.file_type === 'text' ? <IconFileText size={26} style={{ color: 'var(--text-faint)' }} /> : <IconArchive size={26} style={{ color: 'var(--text-faint)' }} />}
+        <span style={{ fontSize: 11, color: 'var(--text-dim)', textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>{p.original_name}</span>
+      </div>
+    )
+  }
+
   const S = {
     btn: (active = true): React.CSSProperties => ({ background: active ? 'var(--accent)' : 'var(--bg-elevated)', color: active ? '#0a0a0b' : 'var(--text-faint)', border: 'none', borderRadius: 'var(--radius-sm)', padding: '9px 16px', fontSize: 13, fontWeight: 600, cursor: active ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', gap: 6, transition: 'background 0.15s' }),
     btnGhost: (danger = false): React.CSSProperties => ({ background: danger ? 'rgba(240,88,107,0.12)' : 'var(--bg-elevated)', color: danger ? 'var(--danger)' : 'var(--text-dim)', border: '1px solid ' + (danger ? 'rgba(240,88,107,0.25)' : 'var(--border)'), borderRadius: 'var(--radius-sm)', padding: '9px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }),
@@ -762,11 +838,8 @@ export default function PrivateGallery({ user, isAdmin, initialAlbums, initialPh
             <div className="masonry">
               {visiblePhotos.map((p, idx) => (
                 <div key={p.id} className="masonry-item">
-                  <img
-                    src={p.thumbUrl} alt={p.caption || ''} loading="lazy" onClick={e => handlePhotoClick(e, idx, p.id)}
-                    style={p.nsfw && !revealed.has(p.id) ? { filter: 'blur(24px)', transition: 'filter 0.2s' } : undefined}
-                  />
-                  {!!p.nsfw && !revealed.has(p.id) && (
+                  <div onClick={e => handlePhotoClick(e, idx, p.id)}>{renderThumb(p)}</div>
+                  {p.file_type === 'image' && !!p.nsfw && !revealed.has(p.id) && (
                     <div
                       onClick={e => { e.stopPropagation(); revealPhoto(p.id) }}
                       style={{ position: 'absolute', inset: 0, zIndex: 2, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, background: 'rgba(0,0,0,0.4)', cursor: 'pointer', textAlign: 'center', padding: 10 }}
@@ -816,16 +889,63 @@ export default function PrivateGallery({ user, isAdmin, initialAlbums, initialPh
           <div style={{ position: 'absolute', top: 18, left: '50%', transform: 'translateX(-50%)', background: 'rgba(0,0,0,0.5)', borderRadius: 20, padding: '3px 12px', fontSize: 11, color: '#888', zIndex: 2 }}>{lightbox + 1} / {visiblePhotos.length}</div>
           {lightbox > 0 && <button onClick={e => { e.stopPropagation(); setLightbox(lightbox - 1) }} style={{ position: 'absolute', left: 14, background: 'rgba(255,255,255,0.08)', border: 'none', borderRadius: '50%', width: 44, height: 44, color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2 }}><IconChevronLeft size={22} /></button>}
           {lightbox < visiblePhotos.length - 1 && <button onClick={e => { e.stopPropagation(); setLightbox(lightbox + 1) }} style={{ position: 'absolute', right: 14, background: 'rgba(255,255,255,0.08)', border: 'none', borderRadius: '50%', width: 44, height: 44, color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2 }}><IconChevronRight size={22} /></button>}
-          <motion.img
-            key={cur.id}
-            initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.15 }}
-            src={cur.url} alt={cur.caption || ''} onClick={e => e.stopPropagation()}
-            style={{
-              maxWidth: 'calc(100vw - 110px)', maxHeight: 'calc(100vh - 110px)', objectFit: 'contain', borderRadius: 4,
-              ...(cur.nsfw && !revealed.has(cur.id) ? { filter: 'blur(40px)', transition: 'filter 0.2s' } : {}),
-            }}
-          />
-          {!!cur.nsfw && !revealed.has(cur.id) && (
+          {cur.file_type === 'image' && (
+            <motion.img
+              key={cur.id}
+              initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.15 }}
+              src={cur.url} alt={cur.caption || ''} onClick={e => e.stopPropagation()}
+              style={{
+                maxWidth: 'calc(100vw - 110px)', maxHeight: 'calc(100vh - 110px)', objectFit: 'contain', borderRadius: 4,
+                ...(cur.nsfw && !revealed.has(cur.id) ? { filter: 'blur(40px)', transition: 'filter 0.2s' } : {}),
+              }}
+            />
+          )}
+          {cur.file_type === 'video' && (
+            <div onClick={e => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+              <video
+                key={cur.id} controls src={cur.url}
+                style={{ maxWidth: 'calc(100vw - 110px)', maxHeight: 'calc(100vh - 160px)', borderRadius: 4, background: '#000' }}
+              />
+              {cur.processing_status !== 'ready' && (
+                <span style={{ fontSize: 12, color: cur.processing_status === 'failed' ? 'var(--danger)' : '#ccc', background: 'rgba(255,255,255,0.08)', padding: '5px 12px', borderRadius: 20 }}>
+                  {cur.processing_status === 'failed' ? "Échec de l'optimisation — la vidéo originale reste lisible" : 'Version optimisée en cours de génération…'}
+                </span>
+              )}
+            </div>
+          )}
+          {(cur.file_type === 'text' || cur.file_type === 'archive') && (
+            <div onClick={e => e.stopPropagation()} style={{ width: 'min(640px, calc(100vw - 110px))', maxHeight: 'calc(100vh - 160px)', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', padding: 20, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text)', fontSize: 13, fontWeight: 600 }}>
+                {cur.file_type === 'text' ? <IconFileText size={16} /> : <IconArchive size={16} />}
+                {cur.original_name}
+              </div>
+              {previewLoading ? (
+                <p style={{ fontSize: 12, color: 'var(--text-faint)' }}>Chargement…</p>
+              ) : cur.file_type === 'text' && preview?.type === 'text' ? (
+                <>
+                  <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 12.5, lineHeight: 1.5, color: 'var(--text-dim)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: 14, maxHeight: 420, overflowY: 'auto' }}>{preview.content}</pre>
+                  {preview.truncated && <p style={{ fontSize: 11, color: 'var(--text-faint)' }}>Contenu tronqué — télécharge le fichier pour le voir en entier.</p>}
+                </>
+              ) : cur.file_type === 'archive' && preview?.type === 'archive' ? (
+                <div style={{ display: 'flex', flexDirection: 'column', maxHeight: 420, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
+                  {preview.entries.length === 0 ? (
+                    <p style={{ fontSize: 12, color: 'var(--text-faint)', padding: 14 }}>Archive vide.</p>
+                  ) : preview.entries.map((entry, i) => (
+                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, padding: '7px 12px', borderBottom: i < preview.entries.length - 1 ? '1px solid var(--border)' : 'none' }}>
+                      <span style={{ fontSize: 12, color: 'var(--text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.name}</span>
+                      <span style={{ fontSize: 11, color: 'var(--text-faint)', flexShrink: 0 }}>{fmt(entry.size)}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p style={{ fontSize: 12, color: 'var(--danger)' }}>Impossible de charger l'aperçu.</p>
+              )}
+              {cur.file_type === 'archive' && (
+                <a href={cur.url} download={cur.original_name || undefined} style={{ ...S.btn(), justifyContent: 'center', textDecoration: 'none' }}><IconDownload size={13} /> Télécharger l'archive</a>
+              )}
+            </div>
+          )}
+          {cur.file_type === 'image' && !!cur.nsfw && !revealed.has(cur.id) && (
             <div
               onClick={e => { e.stopPropagation(); revealPhoto(cur.id) }}
               style={{ position: 'absolute', inset: 0, zIndex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, cursor: 'pointer' }}
@@ -873,15 +993,16 @@ export default function PrivateGallery({ user, isAdmin, initialAlbums, initialPh
               {selectedAlbum === null ? 'Les photos seront ajoutées sans album.' : `Les photos seront ajoutées à l'album « ${selectedAlbumObj?.name} ».`}
             </p>
             <div
-              onDrop={e => { e.preventDefault(); setDragOver(false); setUploadFiles(prev => [...prev, ...Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'))]) }}
+              onDrop={e => { e.preventDefault(); setDragOver(false); setUploadFiles(prev => [...prev, ...Array.from(e.dataTransfer.files).filter(isAcceptedUploadFile)]) }}
               onDragOver={e => { e.preventDefault(); setDragOver(true) }}
               onDragLeave={() => setDragOver(false)}
               onClick={() => fileRef.current?.click()}
               style={{ border: `1.5px dashed ${dragOver ? 'var(--accent)' : 'var(--border-strong)'}`, borderRadius: 'var(--radius-md)', padding: '28px 16px', textAlign: 'center', cursor: 'pointer', background: dragOver ? 'rgba(91,141,239,0.06)' : 'var(--bg)', marginBottom: 14 }}
             >
-              <IconImage size={26} style={{ color: 'var(--text-faint)', marginBottom: 8 }} />
-              <p style={{ color: 'var(--text-dim)', fontSize: 13 }}>{uploadFiles.length > 0 ? `${uploadFiles.length} fichier(s) sélectionné(s)` : 'Glisse tes photos ici, clique, ou Ctrl+V pour coller'}</p>
-              <input ref={fileRef} type="file" accept="image/*" multiple onChange={e => setUploadFiles(prev => [...prev, ...Array.from(e.target.files || [])])} style={{ display: 'none' }} />
+              <IconUpload size={26} style={{ color: 'var(--text-faint)', marginBottom: 8 }} />
+              <p style={{ color: 'var(--text-dim)', fontSize: 13 }}>{uploadFiles.length > 0 ? `${uploadFiles.length} fichier(s) sélectionné(s)` : 'Glisse tes fichiers ici, clique, ou Ctrl+V pour coller des images'}</p>
+              <p style={{ color: 'var(--text-faint)', fontSize: 11, marginTop: 4 }}>Images, vidéos, texte (.txt) et archives (.rar)</p>
+              <input ref={fileRef} type="file" accept="image/*,video/*,.mp4,.mov,.webm,.mkv,.avi,.txt,.rar" multiple onChange={e => setUploadFiles(prev => [...prev, ...Array.from(e.target.files || []).filter(isAcceptedUploadFile)])} style={{ display: 'none' }} />
             </div>
             {uploadError && <p style={{ fontSize: 12, color: 'var(--danger)', marginBottom: 12 }}>{uploadError}</p>}
             <button onClick={() => handleUpload()} disabled={!uploadFiles.length || uploading} style={{ ...S.btn(!!uploadFiles.length && !uploading), width: '100%', justifyContent: 'center', padding: '11px' }}>{uploading ? 'Envoi…' : 'Envoyer'}</button>
