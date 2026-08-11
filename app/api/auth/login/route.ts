@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Email ou mot de passe incorrect' }, { status: 401 })
   }
 
-  const token = createSession(user.id)
+  const token = createSession(user.id, req.headers.get('user-agent'), ip)
   const res = NextResponse.json({ ok: true })
   res.cookies.set(SESSION_COOKIE, token, { httpOnly: true, secure: true, path: '/', maxAge: TTL * 86400, sameSite: 'lax' })
   return res

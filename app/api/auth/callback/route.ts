@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getDb } from '@/lib/db'
 import { createSession, SESSION_COOKIE, TTL } from '@/lib/session'
+import { getClientIp } from '@/lib/publicUploads'
 
 const BASE_URL = 'https://picture.iodev.fr'
 
@@ -53,7 +54,7 @@ export async function GET(req: NextRequest) {
   const state = req.nextUrl.searchParams.get('state')
   const safeRedirect = state && state.startsWith('/') && !state.startsWith('//') ? state : '/prive'
 
-  const token = createSession(userId, req.headers.get('user-agent'))
+  const token = createSession(userId, req.headers.get('user-agent'), getClientIp(req))
   const res = NextResponse.redirect(`${BASE_URL}${safeRedirect}`)
   res.cookies.set(SESSION_COOKIE, token, { httpOnly: true, secure: true, path: '/', maxAge: TTL * 86400, sameSite: 'lax' })
   return res

@@ -177,6 +177,12 @@ export function getDb(): Database.Database {
   if (!photoCols.some(c => c.name === 'nsfw')) {
     db.exec('ALTER TABLE photos ADD COLUMN nsfw INTEGER NOT NULL DEFAULT 0')
   }
+  if (!photoCols.some(c => c.name === 'ip')) {
+    // Utile pour constituer un dossier de conformité légale (réquisition,
+    // signalement) côté admin. Pas de reconstruction rétroactive : les photos
+    // déjà uploadées avant ce déploiement restent à NULL.
+    db.exec('ALTER TABLE photos ADD COLUMN ip TEXT')
+  }
 
   const albumCols = db.prepare("PRAGMA table_info(albums)").all() as { name: string }[]
   if (!albumCols.some(c => c.name === 'unlisted')) {
@@ -203,6 +209,13 @@ export function getDb(): Database.Database {
       DROP TABLE sessions_old;
       CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
     `)
+  }
+
+  const sessionColsAfterRebuild = db.prepare("PRAGMA table_info(sessions)").all() as { name: string }[]
+  if (!sessionColsAfterRebuild.some(c => c.name === 'ip')) {
+    // Même logique que photos.ip : dossier de conformité légale côté admin,
+    // pas de backfill des sessions déjà existantes.
+    db.exec('ALTER TABLE sessions ADD COLUMN ip TEXT')
   }
 
   const shareLinkCols = db.prepare("PRAGMA table_info(share_links)").all() as { name: string }[]
