@@ -87,6 +87,10 @@ export function IconLogout({ size = 16, style }: IconProps) {
   return <svg {...base(size)} style={style}><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></svg>
 }
 
+export function IconEyeOff({ size = 16, style }: IconProps) {
+  return <svg {...base(size)} style={style}><path d="M17.94 17.94A10.94 10.94 0 0112 20c-7 0-11-8-11-8a20.29 20.29 0 015.06-6.06" /><path d="M9.9 4.24A10.94 10.94 0 0112 4c7 0 11 8 11 8a20.29 20.29 0 01-2.16 3.19" /><path d="M14.12 14.12a3 3 0 11-4.24-4.24" /><line x1="1" y1="1" x2="23" y2="23" /></svg>
+}
+
 export function IconDiscord({ size = 18, style }: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 127.14 96.36" fill="currentColor" style={style}>

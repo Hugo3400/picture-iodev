@@ -1,9 +1,9 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Logo, IconLock, IconChevronLeft, IconChevronRight, IconClose } from './icons'
+import { Logo, IconLock, IconChevronLeft, IconChevronRight, IconClose, IconEyeOff } from './icons'
 
-interface SharedPhoto { id: number; caption: string | null; url: string }
+interface SharedPhoto { id: number; caption: string | null; url: string; nsfw: boolean }
 
 export default function ShareView({ token }: { token: string }) {
   const [loading, setLoading] = useState(true)
@@ -18,6 +18,11 @@ export default function ShareView({ token }: { token: string }) {
   const [viewerAccess, setViewerAccess] = useState<'owner' | 'collaborator' | 'pending' | null | 'anonymous'>('anonymous')
   const [requestState, setRequestState] = useState<'idle' | 'sending' | 'error'>('idle')
   const [requestError, setRequestError] = useState('')
+
+  // Comme dans la galerie privée : la révélation d'une photo sensible n'est qu'un état
+  // d'affichage local, elle ne persiste pas entre les rechargements.
+  const [revealed, setRevealed] = useState<Set<number>>(new Set())
+  const revealPhoto = (id: number) => setRevealed(prev => new Set(prev).add(id))
 
   const load = async () => {
     setLoading(true)
@@ -130,7 +135,20 @@ export default function ShareView({ token }: { token: string }) {
         <div className="masonry">
           {photos.map((p, idx) => (
             <div key={p.id} className="masonry-item" onClick={() => setLightbox(idx)}>
-              <img src={p.url} alt={p.caption || ''} loading="lazy" />
+              <img
+                src={p.url} alt={p.caption || ''} loading="lazy"
+                style={p.nsfw && !revealed.has(p.id) ? { filter: 'blur(24px)', transition: 'filter 0.2s' } : undefined}
+              />
+              {p.nsfw && !revealed.has(p.id) && (
+                <div
+                  onClick={e => { e.stopPropagation(); revealPhoto(p.id) }}
+                  style={{ position: 'absolute', inset: 0, zIndex: 2, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, background: 'rgba(0,0,0,0.4)', cursor: 'pointer', textAlign: 'center', padding: 10 }}
+                >
+                  <IconEyeOff size={22} style={{ color: '#fff' }} />
+                  <span style={{ fontSize: 11, color: '#fff', fontWeight: 600 }}>Contenu sensible</span>
+                  <span style={{ fontSize: 10, color: '#ddd' }}>Cliquer pour afficher</span>
+                </div>
+              )}
               {p.caption && (
                 <div className="masonry-overlay">
                   <span style={{ fontSize: 11, color: '#fff', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>{p.caption}</span>
@@ -146,7 +164,23 @@ export default function ShareView({ token }: { token: string }) {
           <button onClick={() => setLightbox(null)} style={{ position: 'absolute', top: 14, right: 14, background: 'rgba(255,255,255,0.08)', border: 'none', borderRadius: '50%', width: 38, height: 38, color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><IconClose size={16} /></button>
           {lightbox > 0 && <button onClick={e => { e.stopPropagation(); setLightbox(lightbox - 1) }} style={{ position: 'absolute', left: 14, background: 'rgba(255,255,255,0.08)', border: 'none', borderRadius: '50%', width: 44, height: 44, color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><IconChevronLeft size={22} /></button>}
           {lightbox < photos.length - 1 && <button onClick={e => { e.stopPropagation(); setLightbox(lightbox + 1) }} style={{ position: 'absolute', right: 14, background: 'rgba(255,255,255,0.08)', border: 'none', borderRadius: '50%', width: 44, height: 44, color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><IconChevronRight size={22} /></button>}
-          <img src={cur.url} alt={cur.caption || ''} onClick={e => e.stopPropagation()} style={{ maxWidth: 'calc(100vw - 110px)', maxHeight: 'calc(100vh - 110px)', objectFit: 'contain', borderRadius: 4 }} />
+          <img
+            src={cur.url} alt={cur.caption || ''} onClick={e => e.stopPropagation()}
+            style={{
+              maxWidth: 'calc(100vw - 110px)', maxHeight: 'calc(100vh - 110px)', objectFit: 'contain', borderRadius: 4,
+              ...(cur.nsfw && !revealed.has(cur.id) ? { filter: 'blur(40px)', transition: 'filter 0.2s' } : {}),
+            }}
+          />
+          {cur.nsfw && !revealed.has(cur.id) && (
+            <div
+              onClick={e => { e.stopPropagation(); revealPhoto(cur.id) }}
+              style={{ position: 'absolute', inset: 0, zIndex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, cursor: 'pointer' }}
+            >
+              <IconEyeOff size={34} style={{ color: '#fff' }} />
+              <span style={{ fontSize: 14, color: '#fff', fontWeight: 600 }}>Contenu sensible</span>
+              <span style={{ fontSize: 12, color: '#aaa' }}>Cliquer pour afficher</span>
+            </div>
+          )}
           {cur.caption && (
             <div onClick={e => e.stopPropagation()} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '16px 20px', background: 'linear-gradient(transparent, rgba(0,0,0,0.85))' }}>
               <div style={{ color: '#fff', fontSize: 13 }}>{cur.caption}</div>

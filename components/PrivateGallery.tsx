@@ -3,10 +3,10 @@
 import { useState, useRef, useEffect } from 'react'
 import { toast } from 'sonner'
 import { motion } from 'framer-motion'
-import { Logo, IconLock, IconImage, IconTrash, IconEdit, IconFolder, IconLink, IconClose, IconChevronLeft, IconChevronRight, IconCheck, IconUpload, IconGrid, IconUsers, IconDownload, IconBell, IconSearch, IconLogout } from './icons'
+import { Logo, IconLock, IconImage, IconTrash, IconEdit, IconFolder, IconLink, IconClose, IconChevronLeft, IconChevronRight, IconCheck, IconUpload, IconGrid, IconUsers, IconDownload, IconBell, IconSearch, IconLogout, IconEyeOff } from './icons'
 
 interface Album { id: number; name: string; description: string | null; photo_count: number; created_at: string; role: 'owner' | 'collaborator'; owner_name?: string; unlisted: number }
-interface Photo { id: number; user_id: number; album_id: number | null; filename: string; original_name: string | null; caption: string | null; size: number; created_at: string; url: string; thumbUrl: string; uploader_name?: string | null; uploader_avatar?: string | null }
+interface Photo { id: number; user_id: number; album_id: number | null; filename: string; original_name: string | null; caption: string | null; size: number; created_at: string; url: string; thumbUrl: string; uploader_name?: string | null; uploader_avatar?: string | null; nsfw: number }
 interface User { id: number; discord_id: string; discord_name: string; discord_avatar: string | null }
 interface Collaborator { id: number; invited_name: string; user_id: number | null; discord_name: string | null; discord_avatar: string | null; created_at: string }
 interface JoinRequest { id: number; user_id: number; discord_name: string; discord_avatar: string | null; created_at: string }
@@ -70,6 +70,11 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
   const [selectMode, setSelectMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [lastSelectedIdx, setLastSelectedIdx] = useState<number | null>(null)
+
+  // Contenu marqué sensible : flouté par défaut pour tout le monde, y compris le propriétaire.
+  // La révélation n'est qu'un état d'affichage local, elle ne persiste pas entre les rechargements.
+  const [revealed, setRevealed] = useState<Set<number>>(new Set())
+  const revealPhoto = (id: number) => setRevealed(prev => new Set(prev).add(id))
 
   const [shareModal, setShareModal] = useState<{ type: 'photo' | 'album'; id: number; name: string; filename?: string } | null>(null)
   const [shareData, setShareData] = useState<{ shared: boolean; url?: string; token?: string; hasPassword?: boolean; viewCount?: number } | null>(null)
@@ -171,6 +176,14 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
   const exitSelectMode = () => { setSelectMode(false); setSelectedIds(new Set()); setLastSelectedIdx(null) }
   const openBulkMove = () => { if (selectedIds.size) setMoveModal({ ids: Array.from(selectedIds), albumId: undefined }) }
   const openBulkDelete = () => { if (selectedIds.size) setDeleteModal({ type: 'photos', ids: Array.from(selectedIds), name: `${selectedIds.size} photo(s)` }) }
+  const openBulkNsfw = async () => {
+    if (!selectedIds.size) return
+    const ids = Array.from(selectedIds)
+    await Promise.all(ids.map(id => fetch(`/api/private-photos/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nsfw: true }) })))
+    setSelectedIds(new Set())
+    await refreshCurrent()
+    toast.success(`${ids.length} photo(s) marquée(s) sensible(s)`)
+  }
 
   const handlePhotoClick = (e: React.MouseEvent, idx: number, id: number) => {
     if (e.ctrlKey || e.metaKey) {
@@ -336,6 +349,15 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
     setEditCaption(null)
     await refreshCurrent()
     toast.success('Légende enregistrée')
+  }
+
+  const handleToggleNsfw = async (p: Photo) => {
+    const next = p.nsfw ? 0 : 1
+    const patch = (arr: Photo[]) => arr.map(x => x.id === p.id ? { ...x, nsfw: next } : x)
+    setPhotos(patch)
+    setAlbumPhotos(patch)
+    await fetch(`/api/private-photos/${p.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nsfw: !!next }) })
+    toast.success(next ? 'Photo marquée comme sensible' : 'Marquage retiré')
   }
 
   const handleMove = async (albumId: number | null) => {
@@ -632,6 +654,7 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
                 <>
                   <span style={{ fontSize: 12, color: 'var(--text-dim)', marginRight: 4 }}>{selectedIds.size} sélectionnée(s)</span>
                   <button onClick={openBulkMove} disabled={!selectedIds.size} style={{ ...S.btnGhost(), opacity: selectedIds.size ? 1 : 0.5, cursor: selectedIds.size ? 'pointer' : 'not-allowed' }}><IconFolder size={13} /> Déplacer</button>
+                  <button onClick={openBulkNsfw} disabled={!selectedIds.size} style={{ ...S.btnGhost(), opacity: selectedIds.size ? 1 : 0.5, cursor: selectedIds.size ? 'pointer' : 'not-allowed' }}><IconEyeOff size={13} /> Marquer sensible</button>
                   <button onClick={openBulkDelete} disabled={!selectedIds.size} style={{ ...S.btnGhost(true), opacity: selectedIds.size ? 1 : 0.5, cursor: selectedIds.size ? 'pointer' : 'not-allowed' }}><IconTrash size={13} /> Supprimer</button>
                   <button onClick={exitSelectMode} style={S.btnGhost()}>Terminé</button>
                 </>
@@ -717,7 +740,20 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
             <div className="masonry">
               {visiblePhotos.map((p, idx) => (
                 <div key={p.id} className="masonry-item">
-                  <img src={p.thumbUrl} alt={p.caption || ''} loading="lazy" onClick={e => handlePhotoClick(e, idx, p.id)} />
+                  <img
+                    src={p.thumbUrl} alt={p.caption || ''} loading="lazy" onClick={e => handlePhotoClick(e, idx, p.id)}
+                    style={p.nsfw && !revealed.has(p.id) ? { filter: 'blur(24px)', transition: 'filter 0.2s' } : undefined}
+                  />
+                  {!!p.nsfw && !revealed.has(p.id) && (
+                    <div
+                      onClick={e => { e.stopPropagation(); revealPhoto(p.id) }}
+                      style={{ position: 'absolute', inset: 0, zIndex: 2, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, background: 'rgba(0,0,0,0.4)', cursor: 'pointer', textAlign: 'center', padding: 10 }}
+                    >
+                      <IconEyeOff size={22} style={{ color: '#fff' }} />
+                      <span style={{ fontSize: 11, color: '#fff', fontWeight: 600 }}>Contenu sensible</span>
+                      <span style={{ fontSize: 10, color: '#ddd' }}>Cliquer pour afficher</span>
+                    </div>
+                  )}
                   {selectMode && (
                     <div onClick={e => { e.stopPropagation(); handlePhotoClick(e, idx, p.id) }} style={{ position: 'absolute', top: 8, left: 8, width: 22, height: 22, borderRadius: '50%', border: '2px solid #fff', background: selectedIds.has(p.id) ? 'var(--accent)' : 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', zIndex: 2 }}>
                       {selectedIds.has(p.id) && <IconCheck size={12} style={{ color: '#0a0a0b' }} />}
@@ -737,6 +773,7 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
                         <button onClick={() => setEditCaption({ id: p.id, value: p.caption || '' })} title="Légende" style={S.iconBtn}><IconEdit size={13} /></button>
                         <button onClick={() => setMoveModal({ ids: [p.id], albumId: p.album_id })} title="Déplacer" style={S.iconBtn}><IconFolder size={13} /></button>
                         <a href={p.url} download={p.original_name || undefined} title="Télécharger" style={S.iconBtn}><IconDownload size={13} /></a>
+                        {canSharePhoto(p) && <button onClick={() => handleToggleNsfw(p)} title={p.nsfw ? 'Retirer le marquage sensible' : 'Marquer comme sensible'} style={{ ...S.iconBtn, color: p.nsfw ? 'var(--accent)' : S.iconBtn.color }}><IconEyeOff size={13} /></button>}
                         {canSharePhoto(p) && <button onClick={() => openShare('photo', p.id, p.original_name || 'photo', p.filename)} title="Partager" style={S.iconBtn}><IconLink size={13} /></button>}
                         <button onClick={() => setDeleteModal({ type: 'photo', id: p.id, name: p.original_name || 'cette photo' })} title="Supprimer" style={{ ...S.iconBtn, color: 'var(--danger)' }}><IconTrash size={13} /></button>
                       </div>
@@ -761,8 +798,21 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
             key={cur.id}
             initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.15 }}
             src={cur.url} alt={cur.caption || ''} onClick={e => e.stopPropagation()}
-            style={{ maxWidth: 'calc(100vw - 110px)', maxHeight: 'calc(100vh - 110px)', objectFit: 'contain', borderRadius: 4 }}
+            style={{
+              maxWidth: 'calc(100vw - 110px)', maxHeight: 'calc(100vh - 110px)', objectFit: 'contain', borderRadius: 4,
+              ...(cur.nsfw && !revealed.has(cur.id) ? { filter: 'blur(40px)', transition: 'filter 0.2s' } : {}),
+            }}
           />
+          {!!cur.nsfw && !revealed.has(cur.id) && (
+            <div
+              onClick={e => { e.stopPropagation(); revealPhoto(cur.id) }}
+              style={{ position: 'absolute', inset: 0, zIndex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, cursor: 'pointer' }}
+            >
+              <IconEyeOff size={34} style={{ color: '#fff' }} />
+              <span style={{ fontSize: 14, color: '#fff', fontWeight: 600 }}>Contenu sensible</span>
+              <span style={{ fontSize: 12, color: '#aaa' }}>Cliquer pour afficher</span>
+            </div>
+          )}
           <div onClick={e => e.stopPropagation()} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '16px 20px', background: 'linear-gradient(transparent, rgba(0,0,0,0.85))', display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: 2 }}>
             <div>
               <div style={{ color: '#fff', fontSize: 13, fontWeight: 600 }}>{cur.caption || cur.original_name}</div>
@@ -781,6 +831,7 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
               <a href={cur.url} download={cur.original_name || undefined} onClick={e => e.stopPropagation()} style={{ background: 'rgba(255,255,255,0.08)', border: 'none', borderRadius: 6, padding: '7px 13px', color: '#ccc', fontSize: 12, cursor: 'pointer', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 6 }}><IconDownload size={12} /> Télécharger</a>
+              {canSharePhoto(cur) && <button onClick={() => handleToggleNsfw(cur)} style={{ background: cur.nsfw ? 'rgba(91,141,239,0.18)' : 'rgba(255,255,255,0.08)', border: 'none', borderRadius: 6, padding: '7px 13px', color: cur.nsfw ? 'var(--accent)' : '#ccc', fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}><IconEyeOff size={12} /> {cur.nsfw ? 'Sensible' : 'Marquer sensible'}</button>}
               {canSharePhoto(cur) && <button onClick={() => openShare('photo', cur.id, cur.original_name || 'photo', cur.filename)} style={{ background: 'rgba(255,255,255,0.08)', border: 'none', borderRadius: 6, padding: '7px 13px', color: '#ccc', fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}><IconLink size={12} /> Partager</button>}
               <button onClick={() => { setDeleteModal({ type: 'photo', id: cur.id, name: cur.original_name || 'cette photo' }); setLightbox(null) }} style={{ background: 'rgba(240,88,107,0.15)', border: '1px solid rgba(240,88,107,0.25)', borderRadius: 6, padding: '7px 13px', color: 'var(--danger)', fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}><IconTrash size={12} /> Supprimer</button>
             </div>
