@@ -8,6 +8,7 @@ type ExpiryChoice = '1h' | '24h' | '7d' | '30d' | 'never'
 interface UploadedFile {
   filename: string
   url: string
+  thumbUrl?: string
   expiresAt: string | null
 }
 
@@ -212,7 +213,7 @@ export default function ImageHost() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {results.map(r => (
               <div key={r.filename} style={{ display: 'flex', alignItems: 'center', gap: 12, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', padding: 12 }}>
-                <img src={r.url} alt="" style={{ width: 48, height: 48, borderRadius: 'var(--radius-sm)', objectFit: 'cover', flexShrink: 0 }} />
+                <img src={r.thumbUrl || r.url} alt="" loading="lazy" style={{ width: 48, height: 48, borderRadius: 'var(--radius-sm)', objectFit: 'cover', flexShrink: 0 }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--accent-hover)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{`${typeof window !== 'undefined' ? window.location.origin : ''}${r.url}`}</div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'var(--text-faint)', fontSize: 11, marginTop: 3 }}>

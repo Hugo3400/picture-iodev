@@ -64,6 +64,11 @@ export function cleanupExpiredPublicUploads(db: Database.Database) {
   for (const row of expired) {
     const filePath = path.join(UPLOADS_DIR, row.filename)
     if (existsSync(filePath)) unlinkSync(filePath)
+
+    // La vignette suit la convention "<base>-thumb.webp" (voir app/api/upload/route.ts) :
+    // pas de colonne dédiée, donc on la retrouve par convention pour éviter un fichier orphelin.
+    const thumbPath = path.join(UPLOADS_DIR, `${row.filename.replace(/\.[a-zA-Z0-9]+$/, '')}-thumb.webp`)
+    if (existsSync(thumbPath)) unlinkSync(thumbPath)
   }
 
   db.prepare('DELETE FROM public_uploads WHERE expires_at IS NOT NULL AND expires_at <= ?').run(now)
