@@ -381,19 +381,28 @@ export default function AdminPanel({
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
-                  <th style={S.th}>Type</th>
-                  <th style={S.th}>Cible</th>
-                  <th style={S.th}>Vues</th>
-                  <th style={S.th}>Mot de passe</th>
-                  <th style={S.th}>Créé le</th>
+                  <SortTh label="Type" sortKey="type" sort={linksSort} onSort={setLinksSort} />
+                  <SortTh label="Cible" sortKey="target_name" sort={linksSort} onSort={setLinksSort} />
+                  <SortTh label="Propriétaire" sortKey="owner_name" sort={linksSort} onSort={setLinksSort} />
+                  <SortTh label="Vues" sortKey="view_count" sort={linksSort} onSort={setLinksSort} />
+                  <SortTh label="Mot de passe" sortKey="has_password" sort={linksSort} onSort={setLinksSort} />
+                  <SortTh label="Créé le" sortKey="created_at" sort={linksSort} onSort={setLinksSort} />
                   <th style={S.th}>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {links.map(l => (
+                {sortRows(links, linksSort, {
+                  type: l => l.type,
+                  target_name: l => l.target_name,
+                  owner_name: l => l.owner_name,
+                  view_count: l => l.view_count,
+                  has_password: l => l.has_password,
+                  created_at: l => l.created_at,
+                }).map(l => (
                   <tr key={l.id}>
                     <td style={S.td}>{l.type === 'photo' ? 'Photo' : 'Album'}</td>
                     <td style={S.td}>{l.target_name || `#${l.target_id}`}</td>
+                    <td style={S.td}>{l.owner_name || '—'}</td>
                     <td style={S.td}>{l.view_count}</td>
                     <td style={S.td}>{l.has_password ? 'Oui' : 'Non'}</td>
                     <td style={S.td}>{fmtDate(l.created_at)}</td>
