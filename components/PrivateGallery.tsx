@@ -7,14 +7,14 @@ import { Logo, IconLock, IconImage, IconTrash, IconEdit, IconFolder, IconLink, I
 
 interface Album { id: number; name: string; description: string | null; photo_count: number; created_at: string; role: 'owner' | 'collaborator'; owner_name?: string; unlisted: number }
 interface Photo { id: number; user_id: number; album_id: number | null; filename: string; original_name: string | null; caption: string | null; size: number; created_at: string; url: string; thumbUrl: string; uploader_name?: string | null; uploader_avatar?: string | null }
-interface User { id: number; discord_id: string; discord_name: string; discord_avatar: string | null }
+interface User { id: number; discord_id: string | null; discord_name: string; discord_avatar: string | null }
 interface Collaborator { id: number; invited_name: string; user_id: number | null; discord_name: string | null; discord_avatar: string | null; created_at: string }
 interface JoinRequest { id: number; user_id: number; discord_name: string; discord_avatar: string | null; created_at: string }
 interface NotifJoinRequest extends JoinRequest { album_id: number; album_name: string }
 interface Invite { id: number; album_id: number; album_name: string; owner_name: string; created_at: string }
 interface DiscoverAlbum { id: number; name: string; description: string | null; photoCount: number; access: 'owner' | 'collaborator' | 'pending' | null }
 interface Profile {
-  discord_id: string; discord_name: string; discord_username: string | null; discord_avatar: string | null
+  discord_id: string | null; discord_name: string; discord_username: string | null; discord_avatar: string | null
   member_since: string; photo_count: number; total_size: number; album_count: number; collab_album_count: number
   uploaded_this_hour: number; upload_hour_limit: number
 }
