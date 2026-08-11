@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { toast } from 'sonner'
 import { motion } from 'framer-motion'
-import { Logo, IconLock, IconImage, IconTrash, IconEdit, IconFolder, IconLink, IconClose, IconChevronLeft, IconChevronRight, IconCheck, IconUpload, IconGrid, IconUsers, IconDownload, IconBell, IconSearch, IconLogout, IconClock, IconEyeOff } from './icons'
+import { Logo, IconLock, IconImage, IconTrash, IconEdit, IconFolder, IconLink, IconClose, IconChevronLeft, IconChevronRight, IconCheck, IconUpload, IconGrid, IconUsers, IconDownload, IconBell, IconSearch, IconLogout, IconClock, IconEyeOff, IconShield } from './icons'
 
 type ExpiryChoice = '1h' | '24h' | '7d' | '30d' | 'never'
 
@@ -51,7 +51,7 @@ const describeUA = (ua: string | null) => {
 const overlayMotion = { initial: { opacity: 0 }, animate: { opacity: 1 }, transition: { duration: 0.15 } }
 const cardMotion = { initial: { opacity: 0, scale: 0.96, y: 8 }, animate: { opacity: 1, scale: 1, y: 0 }, transition: { duration: 0.18, ease: 'easeOut' as const } }
 
-export default function PrivateGallery({ user, initialAlbums, initialPhotos }: { user: User; initialAlbums: Album[]; initialPhotos: Photo[] }) {
+export default function PrivateGallery({ user, isAdmin, initialAlbums, initialPhotos }: { user: User; isAdmin?: boolean; initialAlbums: Album[]; initialPhotos: Photo[] }) {
   const [albums, setAlbums] = useState<Album[]>(initialAlbums)
   const [photos, setPhotos] = useState<Photo[]>(initialPhotos)
   const [albumPhotos, setAlbumPhotos] = useState<Photo[]>([])
@@ -559,6 +559,11 @@ export default function PrivateGallery({ user, initialAlbums, initialPhotos }: {
           <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>· Privé</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          {isAdmin && (
+            <a href="/admin" title="Panel admin" style={{ display: 'flex', alignItems: 'center', fontSize: 12, color: 'var(--text-faint)', textDecoration: 'none' }}>
+              <IconShield size={14} />
+            </a>
+          )}
           <a href="/" style={{ fontSize: 12, color: 'var(--text-dim)', textDecoration: 'none' }}>Galerie publique</a>
           <div ref={notifRef} style={{ position: 'relative' }}>
             <button onClick={() => setShowNotifs(v => !v)} title="Notifications" style={{ position: 'relative', background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', display: 'flex', padding: 4 }}>

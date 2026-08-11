@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 
 import { getSession } from '@/lib/session'
 import { getDb } from '@/lib/db'
+import { isAdmin } from '@/lib/admin'
 import PrivateGallery from '@/components/PrivateGallery'
 import LoginForm from '@/components/LoginForm'
 import { Logo, IconLock, IconDiscord } from '@/components/icons'
@@ -61,5 +62,5 @@ export default async function PrivePage() {
     thumbUrl: p.thumb_filename ? `/api/file/${p.id}?thumb=1` : `/api/file/${p.id}`,
   }))
 
-  return <PrivateGallery user={user} initialAlbums={[...ownedAlbums, ...sharedAlbums] as any} initialPhotos={photos} />
+  return <PrivateGallery user={user} isAdmin={isAdmin(user)} initialAlbums={[...ownedAlbums, ...sharedAlbums] as any} initialPhotos={photos} />
 }

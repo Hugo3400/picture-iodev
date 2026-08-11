@@ -19,6 +19,10 @@ export function IconLock({ size = 16, style }: IconProps) {
   return <svg {...base(size)} style={style}><rect x="4" y="10" width="16" height="10" rx="2" /><path d="M7 10V7a5 5 0 0110 0v3" /></svg>
 }
 
+export function IconShield({ size = 16, style }: IconProps) {
+  return <svg {...base(size)} style={style}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>
+}
+
 export function IconImage({ size = 16, style }: IconProps) {
   return <svg {...base(size)} style={style}><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="8.5" cy="9" r="1.6" /><path d="M21 16l-5.5-5.5a2 2 0 00-2.8 0L4 19" /></svg>
 }
