@@ -184,6 +184,31 @@ export function getDb(): Database.Database {
   if (!photoCols.some(c => c.name === 'nsfw')) {
     db.exec('ALTER TABLE photos ADD COLUMN nsfw INTEGER NOT NULL DEFAULT 0')
   }
+  if (!photoCols.some(c => c.name === 'file_type')) {
+    db.exec("ALTER TABLE photos ADD COLUMN file_type TEXT NOT NULL DEFAULT 'image'")
+  }
+  if (!photoCols.some(c => c.name === 'mime_type')) {
+    db.exec('ALTER TABLE photos ADD COLUMN mime_type TEXT')
+  }
+  if (!photoCols.some(c => c.name === 'processing_status')) {
+    db.exec("ALTER TABLE photos ADD COLUMN processing_status TEXT NOT NULL DEFAULT 'ready'")
+  }
+  if (!photoCols.some(c => c.name === 'compressed_filename')) {
+    db.exec('ALTER TABLE photos ADD COLUMN compressed_filename TEXT')
+  }
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS processing_jobs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','processing','done','failed')),
+      attempts INTEGER NOT NULL DEFAULT 0,
+      error TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_processing_jobs_status ON processing_jobs(status, created_at);
+  `)
 
   const albumCols = db.prepare("PRAGMA table_info(albums)").all() as { name: string }[]
   if (!albumCols.some(c => c.name === 'unlisted')) {

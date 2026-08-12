@@ -44,5 +44,10 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
   const filePath = path.join(STORAGE_DIR, String(photo.user_id), photo.filename)
   if (existsSync(filePath)) await unlink(filePath)
 
+  if (photo.compressed_filename) {
+    const compressedPath = path.join(STORAGE_DIR, String(photo.user_id), photo.compressed_filename)
+    if (existsSync(compressedPath)) await unlink(compressedPath)
+  }
+
   return NextResponse.json({ ok: true })
 }
