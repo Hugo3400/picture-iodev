@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { Logo, IconLock, IconClock, IconChevronLeft, IconChevronRight, IconClose, IconEyeOff } from './icons'
+import Footer from './Footer'
 
 interface SharedPhoto { id: number; caption: string | null; url: string; thumbUrl: string; nsfw: boolean }
 
@@ -189,6 +190,8 @@ export default function ShareView({ token }: { token: string }) {
           )}
         </div>
       )}
+
+      <Footer />
     </div>
   )
 }

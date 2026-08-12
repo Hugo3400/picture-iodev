@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { toast } from 'sonner'
 import { Logo, IconLock, IconImage, IconClose, IconUpload, IconClock, IconLink, IconTrash, IconShield } from './icons'
+import Footer from './Footer'
 
 type ExpiryChoice = '1h' | '24h' | '7d' | '30d' | 'never'
 
@@ -246,6 +247,10 @@ export default function ImageHost({ isAdmin }: { isAdmin?: boolean } = {}) {
             </div>
           </div>
         )}
+
+        <div style={{ width: '100%', maxWidth: 480, marginTop: 40 }}>
+          <Footer />
+        </div>
       </main>
     </>
   )
