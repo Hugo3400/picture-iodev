@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { Logo, IconShield, IconUsers, IconImage, IconFolder, IconLink, IconTrash, IconLogout, IconClose, IconUpload } from './icons'
+import { Logo, IconShield, IconUsers, IconImage, IconFolder, IconLink, IconTrash, IconLogout, IconClose, IconUpload, IconEyeOff, IconChevronLeft, IconDownload } from './icons'
 
 interface SessionUser { id: number; discord_id: string | null; discord_name: string; discord_avatar: string | null }
 
@@ -25,6 +25,7 @@ interface AdminUser {
   photo_count: number
   album_count: number
   active_sessions: number
+  last_login: string | null
 }
 
 interface PublicUpload {
@@ -42,6 +43,54 @@ interface AbuseAttempt {
   token: string
   attempts: number
   last_attempt: string
+}
+
+interface AdminAlbum {
+  id: number
+  name: string
+  photo_count: number
+}
+
+interface AdminPhoto {
+  id: number
+  album_id: number | null
+  filename: string
+  thumb_filename: string | null
+  original_name: string | null
+  caption: string | null
+  size: number
+  nsfw: number
+  created_at: string
+  url: string
+  thumbUrl: string
+}
+
+interface KnownIp {
+  ip: string
+  first_seen: string
+  last_seen: string
+}
+
+interface SessionHistoryEntry {
+  id: number
+  created_at: string
+  expires_at: string
+  user_agent: string | null
+  ip: string | null
+}
+
+interface LegalDossier {
+  generated_at: string
+  account: {
+    id: number
+    email: string | null
+    discord_id: string | null
+    discord_name: string
+    discord_username: string | null
+    created_at: string
+  }
+  known_ips: KnownIp[]
+  sessions: SessionHistoryEntry[]
 }
 
 interface ShareLink {
@@ -138,10 +187,63 @@ export default function AdminPanel({
   const [confirm, setConfirm] = useState<ConfirmAction | null>(null)
   const [preview, setPreview] = useState<{ url: string; label: string } | null>(null)
   const [busy, setBusy] = useState(false)
+  const [viewingUser, setViewingUser] = useState<{ id: number; name: string } | null>(null)
+  const [userFiles, setUserFiles] = useState<{ albums: AdminAlbum[]; photos: AdminPhoto[] } | null>(null)
+  const [filesLoading, setFilesLoading] = useState(false)
+  const [showDossier, setShowDossier] = useState(false)
+  const [dossier, setDossier] = useState<LegalDossier | null>(null)
+  const [dossierLoading, setDossierLoading] = useState(false)
   const [usersSort, setUsersSort] = useState<SortState>({ key: 'created_at', dir: 'desc' })
   const [uploadsSort, setUploadsSort] = useState<SortState>({ key: 'created_at', dir: 'desc' })
   const [securitySort, setSecuritySort] = useState<SortState>({ key: 'attempts', dir: 'desc' })
   const [linksSort, setLinksSort] = useState<SortState>({ key: 'created_at', dir: 'desc' })
+
+  const openUserFiles = async (u: AdminUser) => {
+    setViewingUser({ id: u.id, name: u.discord_name })
+    setUserFiles(null)
+    setShowDossier(false)
+    setDossier(null)
+    setFilesLoading(true)
+    try {
+      const res = await fetch(`/api/admin/users/${u.id}/photos`)
+      if (!res.ok) throw new Error('Échec du chargement des fichiers')
+      setUserFiles(await res.json())
+    } catch (e: any) {
+      toast.error(e.message || 'Une erreur est survenue')
+      setViewingUser(null)
+    } finally {
+      setFilesLoading(false)
+    }
+  }
+
+  const toggleNsfw = async (photoId: number, next: boolean) => {
+    const res = await fetch(`/api/admin/photos/${photoId}/nsfw`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nsfw: next }),
+    })
+    if (!res.ok) { toast.error('Échec de la mise à jour'); return }
+    setUserFiles(f => f ? { ...f, photos: f.photos.map(p => p.id === photoId ? { ...p, nsfw: next ? 1 : 0 } : p) } : f)
+  }
+
+  // Le dossier légal (IP connues, historique des sessions) n'est chargé qu'à la
+  // demande : c'est une action ponctuelle de conformité, pas une info affichée
+  // par défaut sur chaque utilisateur consulté.
+  const loadDossier = async () => {
+    if (!viewingUser) return
+    setShowDossier(true)
+    if (dossier) return
+    setDossierLoading(true)
+    try {
+      const res = await fetch(`/api/admin/users/${viewingUser.id}/export`)
+      if (!res.ok) throw new Error('Échec du chargement du dossier')
+      setDossier(await res.json())
+    } catch (e: any) {
+      toast.error(e.message || 'Une erreur est survenue')
+    } finally {
+      setDossierLoading(false)
+    }
+  }
 
   const runConfirm = async () => {
     if (!confirm) return
@@ -233,7 +335,7 @@ export default function AdminPanel({
           </div>
         )}
 
-        {tab === 'users' && (
+        {tab === 'users' && !viewingUser && (
           <div style={{ ...S.card, padding: 0, overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
@@ -243,6 +345,7 @@ export default function AdminPanel({
                   <SortTh label="Photos" sortKey="photo_count" sort={usersSort} onSort={setUsersSort} />
                   <SortTh label="Albums" sortKey="album_count" sort={usersSort} onSort={setUsersSort} />
                   <SortTh label="Sessions actives" sortKey="active_sessions" sort={usersSort} onSort={setUsersSort} />
+                  <SortTh label="Dernière connexion" sortKey="last_login" sort={usersSort} onSort={setUsersSort} />
                   <th style={S.th}>Actions</th>
                 </tr>
               </thead>
@@ -253,6 +356,7 @@ export default function AdminPanel({
                   photo_count: u => u.photo_count,
                   album_count: u => u.album_count,
                   active_sessions: u => u.active_sessions,
+                  last_login: u => u.last_login,
                 }).map(u => (
                   <tr key={u.id}>
                     <td style={S.td}>
@@ -270,8 +374,14 @@ export default function AdminPanel({
                     <td style={S.td}>{u.photo_count}</td>
                     <td style={S.td}>{u.album_count}</td>
                     <td style={S.td}>{u.active_sessions}</td>
+                    <td style={S.td}>{u.last_login ? fmtDate(u.last_login) : 'Jamais'}</td>
                     <td style={S.td}>
                       <div style={{ display: 'flex', gap: 6 }}>
+                        <button
+                          title="Voir les fichiers"
+                          style={S.iconBtn()}
+                          onClick={() => openUserFiles(u)}
+                        ><IconImage size={14} /></button>
                         <button
                           title="Forcer la déconnexion"
                           disabled={u.active_sessions === 0}
@@ -291,6 +401,110 @@ export default function AdminPanel({
               </tbody>
             </table>
             {users.length === 0 && <p style={{ padding: 20, fontSize: 13, color: 'var(--text-faint)' }}>Aucun utilisateur.</p>}
+          </div>
+        )}
+
+        {tab === 'users' && viewingUser && (
+          <div>
+            <button
+              onClick={() => { setViewingUser(null); setUserFiles(null); setShowDossier(false); setDossier(null) }}
+              style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'none', border: 'none', color: 'var(--text-dim)', fontSize: 13, cursor: 'pointer', padding: 0, marginBottom: 16 }}
+            ><IconChevronLeft size={16} /> Retour aux utilisateurs</button>
+
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10, marginBottom: 18 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <IconImage size={16} style={{ color: 'var(--accent)' }} />
+                <h2 style={{ color: 'var(--text)', fontSize: 15, fontWeight: 600 }}>Fichiers de {viewingUser.name}</h2>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button style={S.tab(showDossier)} onClick={() => showDossier ? setShowDossier(false) : loadDossier()}>
+                  <IconShield size={13} /> Dossier légal
+                </button>
+                <a
+                  href={`/api/admin/users/${viewingUser.id}/export`}
+                  download={`dossier-utilisateur-${viewingUser.id}.json`}
+                  style={{ ...S.tab(false), textDecoration: 'none' }}
+                ><IconDownload size={13} /> Exporter (JSON)</a>
+              </div>
+            </div>
+
+            {showDossier && (
+              <div style={{ ...S.card, marginBottom: 20 }}>
+                {dossierLoading && <p style={{ fontSize: 13, color: 'var(--text-faint)' }}>Chargement du dossier…</p>}
+                {dossier && (
+                  <>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: 10 }}>Informations du compte</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', columnGap: 16, rowGap: 6, fontSize: 13, color: 'var(--text)', marginBottom: 20 }}>
+                      <span style={{ color: 'var(--text-faint)' }}>Email</span><span>{dossier.account.email || '—'}</span>
+                      <span style={{ color: 'var(--text-faint)' }}>Discord ID</span><span>{dossier.account.discord_id || '—'}</span>
+                      <span style={{ color: 'var(--text-faint)' }}>Nom Discord</span><span>{dossier.account.discord_name}</span>
+                      <span style={{ color: 'var(--text-faint)' }}>Pseudo Discord</span><span>{dossier.account.discord_username ? `@${dossier.account.discord_username}` : '—'}</span>
+                      <span style={{ color: 'var(--text-faint)' }}>Compte créé le</span><span>{fmtDate(dossier.account.created_at)}</span>
+                    </div>
+
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: 10 }}>Adresses IP connues ({dossier.known_ips.length})</div>
+                    {dossier.known_ips.length > 0 ? (
+                      <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 20 }}>
+                        <thead>
+                          <tr><th style={S.th}>IP</th><th style={S.th}>Première fois vue</th><th style={S.th}>Dernière fois vue</th></tr>
+                        </thead>
+                        <tbody>
+                          {dossier.known_ips.map(k => (
+                            <tr key={k.ip}>
+                              <td style={{ ...S.td, fontFamily: 'monospace' }}>{k.ip}</td>
+                              <td style={S.td}>{fmtDate(k.first_seen)}</td>
+                              <td style={S.td}>{fmtDate(k.last_seen)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : <p style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 20 }}>Aucune IP enregistrée (comptes/connexions antérieurs à la collecte).</p>}
+
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: 10 }}>Historique des sessions ({dossier.sessions.length})</div>
+                    {dossier.sessions.length > 0 ? (
+                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                          <tr><th style={S.th}>Créée le</th><th style={S.th}>Expire le</th><th style={S.th}>IP</th><th style={S.th}>Appareil</th></tr>
+                        </thead>
+                        <tbody>
+                          {dossier.sessions.map(s => (
+                            <tr key={s.id}>
+                              <td style={S.td}>{fmtDate(s.created_at)}</td>
+                              <td style={S.td}>{fmtDate(s.expires_at)}</td>
+                              <td style={{ ...S.td, fontFamily: 'monospace' }}>{s.ip || '—'}</td>
+                              <td style={{ ...S.td, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.user_agent || '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : <p style={{ fontSize: 12, color: 'var(--text-faint)' }}>Aucune session enregistrée.</p>}
+                  </>
+                )}
+              </div>
+            )}
+
+            {filesLoading && <p style={{ fontSize: 13, color: 'var(--text-faint)' }}>Chargement…</p>}
+
+            {userFiles && (
+              <>
+                {userFiles.albums.filter(a => a.photo_count > 0).map(a => (
+                  <UserPhotoSection
+                    key={a.id}
+                    title={a.name}
+                    photos={userFiles.photos.filter(p => p.album_id === a.id)}
+                    onPreview={setPreview}
+                    onToggleNsfw={toggleNsfw}
+                  />
+                ))}
+                <UserPhotoSection
+                  title="Sans album"
+                  photos={userFiles.photos.filter(p => p.album_id === null)}
+                  onPreview={setPreview}
+                  onToggleNsfw={toggleNsfw}
+                />
+                {userFiles.photos.length === 0 && <p style={{ fontSize: 13, color: 'var(--text-faint)' }}>Aucune photo.</p>}
+              </>
+            )}
           </div>
         )}
 
@@ -452,6 +666,55 @@ export default function AdminPanel({
         </div>
       )}
     </>
+  )
+}
+
+function UserPhotoSection({
+  title, photos, onPreview, onToggleNsfw,
+}: {
+  title: string
+  photos: AdminPhoto[]
+  onPreview: (p: { url: string; label: string }) => void
+  onToggleNsfw: (id: number, next: boolean) => void
+}) {
+  if (photos.length === 0) return null
+  return (
+    <div style={{ marginBottom: 26 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+        <IconFolder size={13} style={{ color: 'var(--text-faint)' }} />
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{title}</span>
+        <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>({photos.length})</span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 10 }}>
+        {photos.map(p => (
+          <div key={p.id} className="masonry-item" style={{ margin: 0, aspectRatio: '1' }}>
+            <img
+              src={p.thumbUrl}
+              alt={p.caption || p.original_name || ''}
+              loading="lazy"
+              style={{ width: '100%', height: '100%', objectFit: 'cover', filter: p.nsfw ? 'blur(16px)' : undefined }}
+            />
+            {/* L'overlay est au-dessus de l'image dans la pile : c'est lui qui doit
+                porter le clic d'ouverture, sinon les clics n'atteignent jamais l'img
+                en dessous (même pattern que .masonry-overlay dans PrivateGallery). */}
+            <div
+              className="masonry-overlay"
+              onClick={() => onPreview({ url: p.url, label: p.caption || p.original_name || `Photo #${p.id}` })}
+              style={{ justifyContent: 'flex-end', padding: 6, cursor: 'pointer' }}
+            >
+              <button
+                title={p.nsfw ? 'Retirer le marquage sensible' : 'Marquer comme sensible'}
+                onClick={e => { e.stopPropagation(); onToggleNsfw(p.id, !p.nsfw) }}
+                style={{
+                  background: p.nsfw ? 'var(--accent)' : 'rgba(0,0,0,0.55)', color: p.nsfw ? '#0a0a0b' : '#fff',
+                  border: 'none', borderRadius: 6, width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
+                }}
+              ><IconEyeOff size={13} /></button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }
 

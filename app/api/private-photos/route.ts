@@ -12,6 +12,7 @@ import {
   MAX_PRIVATE_FILES_PER_REQUEST, PRIVATE_UPLOAD_BYTES_PER_HOUR,
   sumRecentUploadBytes,
 } from '@/lib/privateUploads'
+import { getClientIp } from '@/lib/publicUploads'
 import { withErrorNotify } from '@/lib/errorNotify'
 import { mkdir, writeFile, unlink } from 'fs/promises'
 import { existsSync } from 'fs'
@@ -78,6 +79,7 @@ export const POST = withErrorNotify('POST', async (req: NextRequest) => {
   const user = await getSession()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
+  const ip = getClientIp(req)
   const formData = await req.formData()
   const albumId = formData.get('album_id') ? parseInt(formData.get('album_id') as string, 10) : null
   const duplicateAction = formData.get('duplicate_action') as 'upload_anyway' | 'skip_duplicates' | null
@@ -177,9 +179,9 @@ export const POST = withErrorNotify('POST', async (req: NextRequest) => {
     const mimeType = EXT_MIME[ext] ?? null
 
     const info = db.prepare(
-      `INSERT INTO photos (user_id, album_id, filename, original_name, size, thumb_filename, content_hash, file_type, mime_type, processing_status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(user.id, albumId, filename, file.name, bytes.byteLength, thumbFilename, hash, kind, mimeType, processingStatus)
+      `INSERT INTO photos (user_id, album_id, filename, original_name, size, thumb_filename, content_hash, file_type, mime_type, processing_status, ip)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(user.id, albumId, filename, file.name, bytes.byteLength, thumbFilename, hash, kind, mimeType, processingStatus, ip)
     const photoId = info.lastInsertRowid as number
     uploaded.push(photoId)
 

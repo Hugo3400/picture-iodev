@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
   ).run(normalizedEmail, passwordHash, displayName)
   const userId = info.lastInsertRowid as number
 
-  const token = createSession(userId)
+  const token = createSession(userId, req.headers.get('user-agent'), getClientIp(req))
   const res = NextResponse.json({ ok: true })
   res.cookies.set(SESSION_COOKIE, token, { httpOnly: true, secure: true, path: '/', maxAge: TTL * 86400, sameSite: 'lax' })
   return res
