@@ -146,6 +146,40 @@ export function getDb(): Database.Database {
     conn.pragma('foreign_keys = ON')
   }
 
+  // Ajout de l'auth Telegram (Login Widget) en plus de Discord et email/mot de passe.
+  // telegram_id doit pouvoir cohabiter avec discord_id et email (un compte peut n'avoir
+  // que l'un des trois), et le CHECK existant n'autorise pas encore telegram_id comme
+  // identifiant valide à lui seul. SQLite ne sachant pas modifier une contrainte CHECK
+  // via ALTER TABLE, on reconstruit à nouveau la table (même procédure que le rebuild
+  // discord_id -> nullable ci-dessus : transaction, foreign_keys OFF/ON, copie de toutes
+  // les colonnes existantes).
+  const userColsForTelegram = db.prepare("PRAGMA table_info(users)").all() as { name: string }[]
+  if (!userColsForTelegram.some(c => c.name === 'telegram_id')) {
+    const conn = db
+    conn.pragma('foreign_keys = OFF')
+    conn.transaction(() => {
+      conn.exec(`
+        CREATE TABLE users_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          discord_id TEXT UNIQUE,
+          discord_name TEXT NOT NULL,
+          discord_username TEXT,
+          discord_avatar TEXT,
+          email TEXT UNIQUE,
+          password_hash TEXT,
+          telegram_id TEXT UNIQUE,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          CHECK (discord_id IS NOT NULL OR email IS NOT NULL OR telegram_id IS NOT NULL)
+        );
+        INSERT INTO users_new (id, discord_id, discord_name, discord_username, discord_avatar, email, password_hash, created_at)
+          SELECT id, discord_id, discord_name, discord_username, discord_avatar, email, password_hash, created_at FROM users;
+        DROP TABLE users;
+        ALTER TABLE users_new RENAME TO users;
+      `)
+    })()
+    conn.pragma('foreign_keys = ON')
+  }
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS login_attempts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
