@@ -11,4 +11,7 @@ export async function register() {
   process.on('uncaughtException', (err) => {
     notifyError(err, { path: '(uncaughtException)' })
   })
+
+  const { startWorker } = await import('@/lib/queue')
+  startWorker()
 }
