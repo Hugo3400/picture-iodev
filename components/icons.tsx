@@ -95,6 +95,18 @@ export function IconEyeOff({ size = 16, style }: IconProps) {
   return <svg {...base(size)} style={style}><path d="M17.94 17.94A10.94 10.94 0 0112 20c-7 0-11-8-11-8a20.29 20.29 0 015.06-6.06" /><path d="M9.9 4.24A10.94 10.94 0 0112 4c7 0 11 8 11 8a20.29 20.29 0 01-2.16 3.19" /><path d="M14.12 14.12a3 3 0 11-4.24-4.24" /><line x1="1" y1="1" x2="23" y2="23" /></svg>
 }
 
+export function IconVideo({ size = 16, style }: IconProps) {
+  return <svg {...base(size)} style={style}><rect x="2" y="5" width="14" height="14" rx="2.5" /><path d="M16 10l6-3.5v11L16 14" /></svg>
+}
+
+export function IconFileText({ size = 16, style }: IconProps) {
+  return <svg {...base(size)} style={style}><path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z" /><polyline points="14 3 14 8 19 8" /><line x1="8.5" y1="13" x2="15.5" y2="13" /><line x1="8.5" y1="17" x2="15.5" y2="17" /></svg>
+}
+
+export function IconArchive({ size = 16, style }: IconProps) {
+  return <svg {...base(size)} style={style}><rect x="3" y="3" width="18" height="5" rx="1.5" /><path d="M5 8v11a2 2 0 002 2h10a2 2 0 002-2V8" /><line x1="10" y1="12.5" x2="14" y2="12.5" /></svg>
+}
+
 export function IconDiscord({ size = 18, style }: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 127.14 96.36" fill="currentColor" style={style}>
