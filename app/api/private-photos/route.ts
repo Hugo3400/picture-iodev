@@ -2,20 +2,47 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/session'
 import { getDb } from '@/lib/db'
 import { getAlbumAccess } from '@/lib/permissions'
-import { sniffImageExt } from '@/lib/imageSniff'
+import { sniffFile, EXT_MIME, FileKind } from '@/lib/fileSniff'
 import { scanBuffer } from '@/lib/antivirus'
 import { generateThumbnail } from '@/lib/thumbnail'
+import { probeVideo } from '@/lib/videoProcessing'
+import { enqueueJob } from '@/lib/queue'
 import {
-  MAX_PRIVATE_FILE_SIZE, MAX_PRIVATE_FILES_PER_REQUEST, PRIVATE_UPLOAD_BYTES_PER_HOUR,
+  MAX_PRIVATE_FILE_SIZE, MAX_VIDEO_FILE_SIZE, MAX_TEXT_FILE_SIZE, MAX_ARCHIVE_FILE_SIZE,
+  MAX_PRIVATE_FILES_PER_REQUEST, PRIVATE_UPLOAD_BYTES_PER_HOUR,
   sumRecentUploadBytes,
 } from '@/lib/privateUploads'
 import { withErrorNotify } from '@/lib/errorNotify'
-import { mkdir, writeFile } from 'fs/promises'
+import { mkdir, writeFile, unlink } from 'fs/promises'
 import { existsSync } from 'fs'
 import path from 'path'
 import crypto from 'crypto'
 
 const STORAGE_DIR = path.join(process.cwd(), 'storage', 'private')
+
+const VIDEO_EXT_SET = new Set(['mp4', 'mov', 'webm', 'mkv', 'avi'])
+
+// Estimation rapide (avant lecture des octets) de la taille max plausible pour
+// ce fichier, à partir de son nom/Content-Type déclaré — juste pour rejeter
+// vite un fichier manifestement trop gros sans le charger en mémoire. Le vrai
+// type est confirmé ensuite par sniffFile() sur les octets réellement lus.
+function guessMaxSizeForFile(file: File): number {
+  const ext = file.name.split('.').pop()?.toLowerCase() || ''
+  if (file.type.startsWith('image/')) return MAX_PRIVATE_FILE_SIZE
+  if (VIDEO_EXT_SET.has(ext)) return MAX_VIDEO_FILE_SIZE
+  if (ext === 'txt') return MAX_TEXT_FILE_SIZE
+  if (ext === 'rar') return MAX_ARCHIVE_FILE_SIZE
+  return MAX_PRIVATE_FILE_SIZE
+}
+
+function maxSizeForKind(kind: FileKind): number {
+  switch (kind) {
+    case 'image': return MAX_PRIVATE_FILE_SIZE
+    case 'video': return MAX_VIDEO_FILE_SIZE
+    case 'text': return MAX_TEXT_FILE_SIZE
+    case 'archive': return MAX_ARCHIVE_FILE_SIZE
+  }
+}
 
 export const GET = withErrorNotify('GET', async (req: NextRequest) => {
   const user = await getSession()
@@ -58,12 +85,12 @@ export const POST = withErrorNotify('POST', async (req: NextRequest) => {
   if (!files.length) return NextResponse.json({ error: 'Aucun fichier' }, { status: 400 })
 
   if (files.length > MAX_PRIVATE_FILES_PER_REQUEST) {
-    return NextResponse.json({ error: `Maximum ${MAX_PRIVATE_FILES_PER_REQUEST} images par envoi` }, { status: 400 })
+    return NextResponse.json({ error: `Maximum ${MAX_PRIVATE_FILES_PER_REQUEST} fichiers par envoi` }, { status: 400 })
   }
 
-  const oversized = files.find(f => f.size > MAX_PRIVATE_FILE_SIZE)
+  const oversized = files.find(f => f.size > guessMaxSizeForFile(f))
   if (oversized) {
-    return NextResponse.json({ error: `"${oversized.name}" dépasse la taille maximale de ${MAX_PRIVATE_FILE_SIZE / 1024 / 1024} Mo` }, { status: 400 })
+    return NextResponse.json({ error: `"${oversized.name}" dépasse la taille maximale autorisée pour ce type de fichier` }, { status: 400 })
   }
 
   const db = getDb()
@@ -76,19 +103,20 @@ export const POST = withErrorNotify('POST', async (req: NextRequest) => {
     return NextResponse.json({ error: `Limite atteinte : ${PRIVATE_UPLOAD_BYTES_PER_HOUR / 1024 / 1024} Mo max par heure` }, { status: 429 })
   }
 
-  const prepared: { file: File; bytes: Buffer; ext: string; hash: string }[] = []
+  const prepared: { file: File; bytes: Buffer; ext: string; hash: string; kind: FileKind }[] = []
   for (const file of files) {
-    if (!file.type.startsWith('image/')) continue
     const bytes = Buffer.from(await file.arrayBuffer())
-    const ext = sniffImageExt(bytes)
-    if (!ext) continue
+    const sniffed = sniffFile(bytes, file.name, { maxTextSize: MAX_TEXT_FILE_SIZE })
+    if (!sniffed) continue
+    if (bytes.byteLength > maxSizeForKind(sniffed.kind)) continue
+
     const scan = await scanBuffer(bytes)
     if ('infected' in scan && scan.infected) continue
     const hash = crypto.createHash('sha256').update(bytes).digest('hex')
-    prepared.push({ file, bytes, ext, hash })
+    prepared.push({ file, bytes, ext: sniffed.ext, hash, kind: sniffed.kind })
   }
 
-  if (!prepared.length) return NextResponse.json({ error: 'Aucune image valide' }, { status: 400 })
+  if (!prepared.length) return NextResponse.json({ error: 'Aucun fichier valide' }, { status: 400 })
 
   const findExisting = db.prepare(
     'SELECT id, created_at FROM photos WHERE user_id = ? AND content_hash = ?'
@@ -121,21 +149,41 @@ export const POST = withErrorNotify('POST', async (req: NextRequest) => {
 
   const uploaded: number[] = []
 
-  for (const { file, bytes, ext, hash } of toUpload) {
+  for (const { file, bytes, ext, hash, kind } of toUpload) {
     const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
-    await writeFile(path.join(userDir, filename), bytes)
+    const filePath = path.join(userDir, filename)
+    await writeFile(filePath, bytes)
 
-    const thumbBuffer = await generateThumbnail(bytes)
     let thumbFilename: string | null = null
-    if (thumbBuffer) {
-      thumbFilename = `${filename.replace(/\.[a-zA-Z0-9]+$/, '')}-thumb.webp`
-      await writeFile(path.join(userDir, thumbFilename), thumbBuffer)
+    let processingStatus: 'ready' | 'pending' = 'ready'
+
+    if (kind === 'image') {
+      const thumbBuffer = await generateThumbnail(bytes)
+      if (thumbBuffer) {
+        thumbFilename = `${filename.replace(/\.[a-zA-Z0-9]+$/, '')}-thumb.webp`
+        await writeFile(path.join(userDir, thumbFilename), thumbBuffer)
+      }
+    } else if (kind === 'video') {
+      // Le sniff par extension n'est qu'un indice : seule une lecture réelle
+      // par ffprobe confirme qu'il s'agit bien d'une vidéo décodable.
+      const probe = await probeVideo(filePath)
+      if (!probe.valid) {
+        await unlink(filePath)
+        continue
+      }
+      processingStatus = 'pending'
     }
 
+    const mimeType = EXT_MIME[ext] ?? null
+
     const info = db.prepare(
-      'INSERT INTO photos (user_id, album_id, filename, original_name, size, thumb_filename, content_hash) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    ).run(user.id, albumId, filename, file.name, bytes.byteLength, thumbFilename, hash)
-    uploaded.push(info.lastInsertRowid as number)
+      `INSERT INTO photos (user_id, album_id, filename, original_name, size, thumb_filename, content_hash, file_type, mime_type, processing_status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(user.id, albumId, filename, file.name, bytes.byteLength, thumbFilename, hash, kind, mimeType, processingStatus)
+    const photoId = info.lastInsertRowid as number
+    uploaded.push(photoId)
+
+    if (kind === 'video') enqueueJob(db, photoId)
   }
 
   return NextResponse.json({ uploaded, skippedDuplicates: duplicateAction === 'skip_duplicates' ? duplicates.length : 0 })
