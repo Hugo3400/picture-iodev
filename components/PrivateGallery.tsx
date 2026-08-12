@@ -20,7 +20,7 @@ const fmtExpiry = (iso: string | null) => {
   return `Expire le ${new Date(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })} à ${new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`
 }
 
-interface Album { id: number; name: string; description: string | null; photo_count: number; created_at: string; role: 'owner' | 'collaborator'; owner_name?: string; unlisted: number }
+interface Album { id: number; name: string; description: string | null; photo_count: number; created_at: string; role: 'owner' | 'collaborator'; owner_name?: string; unlisted: number; parent_id: number | null }
 interface Photo { id: number; user_id: number; album_id: number | null; filename: string; original_name: string | null; caption: string | null; size: number; created_at: string; url: string; thumbUrl: string; uploader_name?: string | null; uploader_avatar?: string | null; nsfw: number; file_type: 'image' | 'video' | 'text' | 'archive'; mime_type: string | null; processing_status: 'ready' | 'pending' | 'processing' | 'failed' }
 interface TextPreview { type: 'text'; content: string; truncated: boolean }
 interface ArchivePreview { type: 'archive'; entries: { name: string; size: number }[] }
@@ -89,10 +89,21 @@ export default function PrivateGallery({ user, isAdmin, initialAlbums, initialPh
 
   const [showNewAlbum, setShowNewAlbum] = useState(false)
   const [newAlbumName, setNewAlbumName] = useState('')
+  const [newAlbumAtRoot, setNewAlbumAtRoot] = useState(false)
 
   const [renameAlbum, setRenameAlbum] = useState<{ id: number; name: string } | null>(null)
   const [editCaption, setEditCaption] = useState<{ id: number; value: string } | null>(null)
   const [moveModal, setMoveModal] = useState<{ ids: number[]; albumId: number | null | undefined } | null>(null)
+  const [moveAlbumModal, setMoveAlbumModal] = useState<{ id: number; name: string } | null>(null)
+
+  // Dossiers dépliés dans la sidebar arborescente (état purement local, pas persisté).
+  const [expandedAlbums, setExpandedAlbums] = useState<Set<number>>(new Set())
+  const toggleExpandAlbum = (id: number) => setExpandedAlbums(prev => {
+    const next = new Set(prev)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    return next
+  })
 
   const [selectMode, setSelectMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
@@ -163,6 +174,128 @@ export default function PrivateGallery({ user, isAdmin, initialAlbums, initialPh
   const sharedAlbums = albums.filter(a => a.role === 'collaborator')
   const albumCover = (albumId: number) => photos.find(p => p.album_id === albumId)?.thumbUrl
   const openAlbumFromGrid = (albumId: number) => { setSelectedAlbum(albumId); changeMediaView('photos') }
+
+  // Groupe une liste d'albums par parent_id pour construire une arborescence.
+  // Si le parent d'un album n'appartient pas à CETTE liste (ex: sous-dossier créé
+  // dans l'album partagé de quelqu'un d'autre), on l'affiche comme racine de la
+  // liste plutôt que de le faire disparaître silencieusement.
+  const buildAlbumTree = (items: Album[]): Map<number | null, Album[]> => {
+    const ids = new Set(items.map(a => a.id))
+    const byParent = new Map<number | null, Album[]>()
+    for (const a of items) {
+      const key = a.parent_id !== null && ids.has(a.parent_id) ? a.parent_id : null
+      if (!byParent.has(key)) byParent.set(key, [])
+      byParent.get(key)!.push(a)
+    }
+    return byParent
+  }
+  const ownedTree = buildAlbumTree(ownedAlbums)
+  const sharedTree = buildAlbumTree(sharedAlbums)
+  const rootAlbums = [...ownedAlbums, ...sharedAlbums].filter(a => a.parent_id === null)
+  const subAlbums = selectedAlbum !== null ? albums.filter(a => a.parent_id === selectedAlbum) : []
+
+  // Chemin depuis la racine jusqu'à l'album sélectionné, pour le fil d'ariane.
+  const albumPath: Album[] = (() => {
+    if (selectedAlbum === null) return []
+    const path: Album[] = []
+    const visited = new Set<number>()
+    let current = albums.find(a => a.id === selectedAlbum)
+    while (current && !visited.has(current.id)) {
+      path.unshift(current)
+      visited.add(current.id)
+      current = current.parent_id !== null ? albums.find(a => a.id === current!.parent_id) : undefined
+    }
+    return path
+  })()
+
+  // Descendants d'un album (tous niveaux), pour exclure côté client les cibles de
+  // déplacement invalides avant même l'aller-retour serveur (qui les rejette de
+  // toute façon en dernier recours).
+  const getDescendantIds = (id: number): Set<number> => {
+    const result = new Set<number>()
+    const stack = [id]
+    while (stack.length) {
+      const cur = stack.pop()!
+      for (const a of albums) {
+        if (a.parent_id === cur && !result.has(a.id)) {
+          result.add(a.id)
+          stack.push(a.id)
+        }
+      }
+    }
+    return result
+  }
+
+  // Aplatit l'arborescence des albums possédés (avec profondeur) pour la modale de
+  // déplacement, en excluant l'album qu'on déplace et tous ses descendants.
+  const flattenOwnedForMove = (excludeIds: Set<number>): { album: Album; depth: number }[] => {
+    const result: { album: Album; depth: number }[] = []
+    const walk = (parentId: number | null, depth: number) => {
+      for (const a of ownedTree.get(parentId) || []) {
+        if (excludeIds.has(a.id)) continue
+        result.push({ album: a, depth })
+        walk(a.id, depth + 1)
+      }
+    }
+    walk(null, 0)
+    return result
+  }
+
+  // Rendu récursif d'une ligne d'album dans la sidebar (et de ses enfants s'il est
+  // déplié) : indentation par niveau via marginLeft imbriqué, chevron d'expansion
+  // uniquement si l'album a des enfants dans cette section (possédée ou partagée).
+  const renderAlbumNode = (a: Album, tree: Map<number | null, Album[]>, shared: boolean): React.ReactNode => {
+    const children = tree.get(a.id) || []
+    const hasChildren = children.length > 0
+    const expanded = expandedAlbums.has(a.id)
+    return (
+      <div key={a.id}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 2, marginBottom: 2 }}>
+          {hasChildren ? (
+            <button onClick={() => toggleExpandAlbum(a.id)} title={expanded ? 'Réduire' : 'Déplier'} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', display: 'flex', padding: 4, flexShrink: 0 }}>
+              <IconChevronRight size={11} style={{ transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }} />
+            </button>
+          ) : (
+            <span style={{ width: 19, flexShrink: 0 }} />
+          )}
+          <button onClick={() => setSelectedAlbum(a.id)} title={shared && a.owner_name ? `Album de ${a.owner_name}` : undefined} style={{ flex: 1, textAlign: 'left', display: 'flex', alignItems: 'center', gap: 9, background: selectedAlbum === a.id ? 'rgba(91,141,239,0.12)' : 'transparent', color: selectedAlbum === a.id ? 'var(--accent)' : 'var(--text-dim)', border: 'none', borderRadius: 'var(--radius-sm)', padding: '7px 10px', fontSize: 13, cursor: 'pointer', overflow: 'hidden' }}>
+            {shared ? <IconUsers size={14} style={{ flexShrink: 0 }} /> : <IconFolder size={14} style={{ flexShrink: 0 }} />}
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</span>
+            <span style={{ color: 'var(--text-faint)', marginLeft: 'auto', flexShrink: 0 }}>{a.photo_count}</span>
+          </button>
+          {!shared ? (
+            <>
+              <button onClick={() => openCollab(a.id, a.name)} title="Collaborateurs" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', display: 'flex', padding: 6 }}><IconUsers size={13} /></button>
+              <button onClick={() => setMoveAlbumModal({ id: a.id, name: a.name })} title="Déplacer" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', display: 'flex', padding: 6 }}><IconFolder size={13} /></button>
+              <button onClick={() => setRenameAlbum({ id: a.id, name: a.name })} title="Renommer" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', display: 'flex', padding: 6 }}><IconEdit size={13} /></button>
+            </>
+          ) : (
+            <button onClick={() => setDeleteModal({ type: 'leave-album', id: a.id, name: a.name })} title="Quitter l'album" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', display: 'flex', padding: 6 }}><IconLogout size={13} /></button>
+          )}
+        </div>
+        {hasChildren && expanded && (
+          <div style={{ marginLeft: 19 }}>
+            {children.map(c => renderAlbumNode(c, tree, shared))}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // Déplie automatiquement les ancêtres de l'album sélectionné pour qu'il reste
+  // visible dans la sidebar quand on y arrive via le fil d'ariane ou une tuile
+  // de sous-dossier plutôt que par un clic direct dans l'arbre.
+  useEffect(() => {
+    if (selectedAlbum === null) return
+    const ancestorIds = albumPath.slice(0, -1).map(a => a.id)
+    if (!ancestorIds.length) return
+    setExpandedAlbums(prev => {
+      const next = new Set(prev)
+      let changed = false
+      for (const id of ancestorIds) if (!next.has(id)) { next.add(id); changed = true }
+      return changed ? next : prev
+    })
+  }, [selectedAlbum])
 
   const refreshAlbums = async () => {
     const r = await fetch('/api/albums')
@@ -368,7 +501,8 @@ export default function PrivateGallery({ user, isAdmin, initialAlbums, initialPh
 
   const handleCreateAlbum = async () => {
     if (!newAlbumName.trim()) return
-    const r = await fetch('/api/albums', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: newAlbumName.trim() }) })
+    const parentId = selectedAlbum !== null && !newAlbumAtRoot ? selectedAlbum : null
+    const r = await fetch('/api/albums', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: newAlbumName.trim(), parent_id: parentId }) })
     if (r.ok) {
       setNewAlbumName('')
       setShowNewAlbum(false)
@@ -376,6 +510,19 @@ export default function PrivateGallery({ user, isAdmin, initialAlbums, initialPh
       toast.success('Album créé')
     } else {
       toast.error('Erreur lors de la création de l\'album')
+    }
+  }
+
+  const handleMoveAlbum = async (parentId: number | null) => {
+    if (!moveAlbumModal) return
+    const r = await fetch(`/api/albums/${moveAlbumModal.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ parent_id: parentId }) })
+    if (r.ok) {
+      setMoveAlbumModal(null)
+      await refreshAlbums()
+      toast.success('Album déplacé')
+    } else {
+      const d = await r.json().catch(() => null)
+      toast.error(d?.error || 'Erreur lors du déplacement')
     }
   }
 
@@ -704,34 +851,15 @@ export default function PrivateGallery({ user, isAdmin, initialAlbums, initialPh
           </button>
 
           <div style={{ fontSize: 11, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', margin: '18px 0 6px 10px' }}>Albums</div>
-          {ownedAlbums.map(a => (
-            <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 2, marginBottom: 2 }}>
-              <button onClick={() => setSelectedAlbum(a.id)} style={{ flex: 1, textAlign: 'left', display: 'flex', alignItems: 'center', gap: 9, background: selectedAlbum === a.id ? 'rgba(91,141,239,0.12)' : 'transparent', color: selectedAlbum === a.id ? 'var(--accent)' : 'var(--text-dim)', border: 'none', borderRadius: 'var(--radius-sm)', padding: '7px 10px', fontSize: 13, cursor: 'pointer', overflow: 'hidden' }}>
-                <IconFolder size={14} style={{ flexShrink: 0 }} />
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</span>
-                <span style={{ color: 'var(--text-faint)', marginLeft: 'auto', flexShrink: 0 }}>{a.photo_count}</span>
-              </button>
-              <button onClick={() => openCollab(a.id, a.name)} title="Collaborateurs" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', display: 'flex', padding: 6 }}><IconUsers size={13} /></button>
-              <button onClick={() => setRenameAlbum({ id: a.id, name: a.name })} title="Renommer" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', display: 'flex', padding: 6 }}><IconEdit size={13} /></button>
-            </div>
-          ))}
+          {(ownedTree.get(null) || []).map(a => renderAlbumNode(a, ownedTree, false))}
 
-          <button onClick={() => setShowNewAlbum(true)} style={{ width: '100%', textAlign: 'left', background: 'transparent', color: 'var(--accent)', border: 'none', borderRadius: 'var(--radius-sm)', padding: '8px 10px', fontSize: 13, fontWeight: 600, cursor: 'pointer', marginTop: 10 }}>+ Nouvel album</button>
+          <button onClick={() => { setShowNewAlbum(true); setNewAlbumAtRoot(false) }} style={{ width: '100%', textAlign: 'left', background: 'transparent', color: 'var(--accent)', border: 'none', borderRadius: 'var(--radius-sm)', padding: '8px 10px', fontSize: 13, fontWeight: 600, cursor: 'pointer', marginTop: 10 }}>+ Nouvel album</button>
           <button onClick={() => { setShowDiscover(true); setDiscoverQuery(''); setDiscoverUser(null); setDiscoverAlbums([]); setDiscoverError('') }} style={{ width: '100%', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 7, background: 'transparent', color: 'var(--text-faint)', border: 'none', borderRadius: 'var(--radius-sm)', padding: '8px 10px', fontSize: 12.5, cursor: 'pointer' }}><IconSearch size={12} /> Rechercher un album</button>
 
           {sharedAlbums.length > 0 && (
             <>
               <div style={{ fontSize: 11, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', margin: '18px 0 6px 10px' }}>Partagés avec moi</div>
-              {sharedAlbums.map(a => (
-                <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 2, marginBottom: 2 }}>
-                  <button onClick={() => setSelectedAlbum(a.id)} title={a.owner_name ? `Album de ${a.owner_name}` : undefined} style={{ flex: 1, textAlign: 'left', display: 'flex', alignItems: 'center', gap: 9, background: selectedAlbum === a.id ? 'rgba(91,141,239,0.12)' : 'transparent', color: selectedAlbum === a.id ? 'var(--accent)' : 'var(--text-dim)', border: 'none', borderRadius: 'var(--radius-sm)', padding: '7px 10px', fontSize: 13, cursor: 'pointer', overflow: 'hidden' }}>
-                    <IconUsers size={14} style={{ flexShrink: 0 }} />
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</span>
-                    <span style={{ color: 'var(--text-faint)', marginLeft: 'auto', flexShrink: 0 }}>{a.photo_count}</span>
-                  </button>
-                  <button onClick={() => setDeleteModal({ type: 'leave-album', id: a.id, name: a.name })} title="Quitter l'album" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', display: 'flex', padding: 6 }}><IconLogout size={13} /></button>
-                </div>
-              ))}
+              {(sharedTree.get(null) || []).map(a => renderAlbumNode(a, sharedTree, true))}
             </>
           )}
 
@@ -745,6 +873,17 @@ export default function PrivateGallery({ user, isAdmin, initialAlbums, initialPh
 
         {/* Main */}
         <main style={{ flex: 1, padding: 24, minWidth: 0 }}>
+          {albumPath.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 4, marginBottom: 10, fontSize: 12 }}>
+              <button onClick={() => setSelectedAlbum(null)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: '2px 4px' }}>Racine</button>
+              {albumPath.map(a => (
+                <span key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <IconChevronRight size={11} style={{ color: 'var(--text-faint)' }} />
+                  <button onClick={() => setSelectedAlbum(a.id)} style={{ background: 'none', border: 'none', color: a.id === selectedAlbum ? 'var(--text)' : 'var(--text-faint)', fontWeight: a.id === selectedAlbum ? 600 : 400, cursor: 'pointer', padding: '2px 4px' }}>{a.name}</button>
+                </span>
+              ))}
+            </div>
+          )}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
             <div>
               <h1 style={{ color: 'var(--text)', fontSize: 16, fontWeight: 600 }}>
@@ -809,7 +948,7 @@ export default function PrivateGallery({ user, isAdmin, initialAlbums, initialPh
               </div>
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 14 }}>
-                {[...ownedAlbums, ...sharedAlbums].map((a, idx) => (
+                {rootAlbums.map((a, idx) => (
                   <motion.div
                     key={a.id}
                     initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
@@ -829,19 +968,49 @@ export default function PrivateGallery({ user, isAdmin, initialAlbums, initialPh
                 ))}
               </div>
             )
-          ) : visiblePhotos.length === 0 ? (
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '50vh', gap: 14 }}>
-              <IconImage size={36} style={{ color: 'var(--text-faint)' }} />
-              {searchQuery.trim() && basePhotos.length > 0 ? (
-                <p style={{ color: 'var(--text-faint)', fontSize: 14 }}>Aucun résultat pour « {searchQuery.trim()} »</p>
-              ) : (
-                <>
-                  <p style={{ color: 'var(--text-faint)', fontSize: 14 }}>Aucune photo ici</p>
-                  <button onClick={() => setShowUpload(true)} style={S.btn()}>Ajouter des photos</button>
-                </>
-              )}
-            </div>
           ) : (
+            <>
+              {selectedAlbum !== null && subAlbums.length > 0 && (
+                <div style={{ marginBottom: 22 }}>
+                  <div style={{ fontSize: 11, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 10 }}>Sous-dossiers</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 14 }}>
+                    {subAlbums.map(a => (
+                      <div
+                        key={a.id}
+                        onClick={() => setSelectedAlbum(a.id)}
+                        style={{ cursor: 'pointer', borderRadius: 'var(--radius-md)', overflow: 'hidden', border: '1px solid var(--border)', background: 'var(--bg-card)' }}
+                      >
+                        <div style={{ aspectRatio: '1 / 1', background: 'var(--bg-elevated)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          {albumCover(a.id)
+                            ? <img src={albumCover(a.id)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            : <IconFolder size={28} style={{ color: 'var(--text-faint)' }} />}
+                        </div>
+                        <div style={{ padding: '9px 11px' }}>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</div>
+                          <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>{a.photo_count} photo{a.photo_count !== 1 ? 's' : ''}{a.role === 'collaborator' && a.owner_name ? ` · ${a.owner_name}` : ''}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {visiblePhotos.length === 0 ? (
+                selectedAlbum !== null && subAlbums.length > 0 ? (
+                  <p style={{ color: 'var(--text-faint)', fontSize: 13 }}>Aucune photo directement dans ce dossier.</p>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '50vh', gap: 14 }}>
+                    <IconImage size={36} style={{ color: 'var(--text-faint)' }} />
+                    {searchQuery.trim() && basePhotos.length > 0 ? (
+                      <p style={{ color: 'var(--text-faint)', fontSize: 14 }}>Aucun résultat pour « {searchQuery.trim()} »</p>
+                    ) : (
+                      <>
+                        <p style={{ color: 'var(--text-faint)', fontSize: 14 }}>Aucune photo ici</p>
+                        <button onClick={() => setShowUpload(true)} style={S.btn()}>Ajouter des photos</button>
+                      </>
+                    )}
+                  </div>
+                )
+              ) : (
             <div className="masonry">
               {visiblePhotos.map((p, idx) => (
                 <div key={p.id} className="masonry-item">
@@ -885,6 +1054,8 @@ export default function PrivateGallery({ user, isAdmin, initialAlbums, initialPh
                 </div>
               ))}
             </div>
+              )}
+            </>
           )}
         </main>
       </div>
@@ -1053,8 +1224,17 @@ export default function PrivateGallery({ user, isAdmin, initialAlbums, initialPh
       {showNewAlbum && (
         <motion.div {...overlayMotion} style={S.modal} onClick={() => setShowNewAlbum(false)}>
           <motion.div {...cardMotion} style={{ ...S.card, maxWidth: 360 }} onClick={e => e.stopPropagation()}>
-            <h2 style={{ color: 'var(--text)', fontSize: 16, fontWeight: 600, marginBottom: 14 }}>Nouvel album</h2>
+            <h2 style={{ color: 'var(--text)', fontSize: 16, fontWeight: 600, marginBottom: 4 }}>Nouvel album</h2>
+            <p style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 14 }}>
+              {selectedAlbum === null || newAlbumAtRoot ? 'Sera créé à la racine.' : `Sera créé dans « ${selectedAlbumObj?.name} ».`}
+            </p>
             <input value={newAlbumName} onChange={e => setNewAlbumName(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleCreateAlbum()} placeholder="Nom de l'album" style={{ ...S.input, marginBottom: 14 }} autoFocus />
+            {selectedAlbum !== null && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, cursor: 'pointer' }}>
+                <input type="checkbox" checked={newAlbumAtRoot} onChange={e => setNewAlbumAtRoot(e.target.checked)} />
+                <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>Créer à la racine plutôt que dans le dossier actuel</span>
+              </label>
+            )}
             <button onClick={handleCreateAlbum} disabled={!newAlbumName.trim()} style={{ ...S.btn(!!newAlbumName.trim()), width: '100%', justifyContent: 'center' }}>Créer</button>
           </motion.div>
         </motion.div>
@@ -1237,6 +1417,28 @@ export default function PrivateGallery({ user, isAdmin, initialAlbums, initialPh
               <button onClick={() => handleMove(null)} style={{ textAlign: 'left', background: moveModal.albumId === null ? 'rgba(91,141,239,0.12)' : 'transparent', color: moveModal.albumId === null ? 'var(--accent)' : 'var(--text-dim)', border: 'none', borderRadius: 'var(--radius-sm)', padding: '9px 12px', fontSize: 13, cursor: 'pointer' }}>Sans album</button>
               {albums.map(a => (
                 <button key={a.id} onClick={() => handleMove(a.id)} style={{ textAlign: 'left', display: 'flex', alignItems: 'center', gap: 8, background: moveModal.albumId === a.id ? 'rgba(91,141,239,0.12)' : 'transparent', color: moveModal.albumId === a.id ? 'var(--accent)' : 'var(--text-dim)', border: 'none', borderRadius: 'var(--radius-sm)', padding: '9px 12px', fontSize: 13, cursor: 'pointer' }}><IconFolder size={13} /> {a.name}</button>
+              ))}
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+
+      {/* Move album modal (déplacer un dossier lui-même, pas son contenu) */}
+      {moveAlbumModal && (
+        <motion.div {...overlayMotion} style={S.modal} onClick={() => setMoveAlbumModal(null)}>
+          <motion.div {...cardMotion} style={{ ...S.card, maxWidth: 360 }} onClick={e => e.stopPropagation()}>
+            <h2 style={{ color: 'var(--text)', fontSize: 16, fontWeight: 600, marginBottom: 4 }}>Déplacer l'album</h2>
+            <p style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 14 }}>« {moveAlbumModal.name} » — choisis son nouveau dossier parent.</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 280, overflowY: 'auto' }}>
+              <button onClick={() => handleMoveAlbum(null)} style={{ textAlign: 'left', background: 'transparent', color: 'var(--text-dim)', border: 'none', borderRadius: 'var(--radius-sm)', padding: '9px 12px', fontSize: 13, cursor: 'pointer', fontWeight: 600 }}>Racine</button>
+              {flattenOwnedForMove(new Set([moveAlbumModal.id, ...Array.from(getDescendantIds(moveAlbumModal.id))])).map(({ album: a, depth }) => (
+                <button
+                  key={a.id}
+                  onClick={() => handleMoveAlbum(a.id)}
+                  style={{ textAlign: 'left', display: 'flex', alignItems: 'center', gap: 8, background: 'transparent', color: 'var(--text-dim)', border: 'none', borderRadius: 'var(--radius-sm)', padding: '9px 12px', paddingLeft: 12 + depth * 16, fontSize: 13, cursor: 'pointer' }}
+                >
+                  <IconFolder size={13} /> {a.name}
+                </button>
               ))}
             </div>
           </motion.div>

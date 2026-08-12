@@ -290,5 +290,14 @@ export function getDb(): Database.Database {
     db.exec('ALTER TABLE share_links ADD COLUMN expires_at TEXT')
   }
 
+  const albumColsForParent = db.prepare("PRAGMA table_info(albums)").all() as { name: string }[]
+  if (!albumColsForParent.some(c => c.name === 'parent_id')) {
+    // ON DELETE SET NULL (pas CASCADE) : supprimer un dossier promeut ses
+    // sous-dossiers directs à la racine, comme les photos d'un album supprimé
+    // survivent déjà sans album.
+    db.exec('ALTER TABLE albums ADD COLUMN parent_id INTEGER REFERENCES albums(id) ON DELETE SET NULL')
+    db.exec('CREATE INDEX IF NOT EXISTS idx_albums_parent ON albums(parent_id)')
+  }
+
   return db
 }

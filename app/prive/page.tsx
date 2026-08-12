@@ -66,14 +66,27 @@ export default async function PrivePage() {
     `SELECT a.*, (SELECT COUNT(*) FROM photos p WHERE p.album_id = a.id) AS photo_count, 'owner' AS role
      FROM albums a WHERE a.user_id = ? ORDER BY a.created_at DESC`
   ).all(user.id)
+  // Même logique que GET /api/albums : l'accès collaborateur se propage aux
+  // sous-dossiers, il faut donc remonter tous les descendants des albums
+  // directement partagés (CTE récursive) pour que le rendu initial (SSR) les
+  // affiche déjà, sans attendre un refreshAlbums() côté client.
   const sharedAlbums = db.prepare(
-    `SELECT a.*, (SELECT COUNT(*) FROM photos p WHERE p.album_id = a.id) AS photo_count, 'collaborator' AS role,
+    `WITH RECURSIVE collab_roots AS (
+       SELECT DISTINCT a.id FROM albums a JOIN album_collaborators c ON c.album_id = a.id WHERE c.user_id = ?
+     ),
+     descendants AS (
+       SELECT id FROM collab_roots
+       UNION
+       SELECT a.id FROM albums a JOIN descendants d ON a.parent_id = d.id
+     )
+     SELECT a.*, (SELECT COUNT(*) FROM photos p WHERE p.album_id = a.id) AS photo_count, 'collaborator' AS role,
             u.discord_name AS owner_name
      FROM albums a
-     JOIN album_collaborators c ON c.album_id = a.id
+     JOIN descendants d ON d.id = a.id
      JOIN users u ON u.id = a.user_id
-     WHERE c.user_id = ? ORDER BY a.created_at DESC`
-  ).all(user.id)
+     WHERE a.user_id != ?
+     ORDER BY a.created_at DESC`
+  ).all(user.id, user.id)
   const photos = (db.prepare(
     `SELECT p.*, u.discord_name AS uploader_name, u.discord_avatar AS uploader_avatar
      FROM photos p JOIN users u ON u.id = p.user_id WHERE p.user_id = ? ORDER BY p.created_at DESC`

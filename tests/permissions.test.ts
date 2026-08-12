@@ -5,7 +5,7 @@ import { getAlbumAccess, canEditPhoto, createJoinRequest } from '@/lib/permissio
 function makeDb() {
   const db = new Database(':memory:')
   db.exec(`
-    CREATE TABLE albums (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL);
+    CREATE TABLE albums (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, parent_id INTEGER);
     CREATE TABLE album_collaborators (id INTEGER PRIMARY KEY, album_id INTEGER NOT NULL, user_id INTEGER);
     CREATE TABLE album_join_requests (
       id INTEGER PRIMARY KEY AUTOINCREMENT, album_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
@@ -14,6 +14,15 @@ function makeDb() {
   `)
   db.prepare('INSERT INTO albums (id, user_id) VALUES (1, 100)').run() // owned by user 100
   db.prepare('INSERT INTO album_collaborators (album_id, user_id) VALUES (1, 200)').run() // user 200 is collaborator
+  return db
+}
+
+function makeNestedDb() {
+  const db = makeDb()
+  // 1 (owner 100, collab 200) -> 2 -> 3 -> 4, chaîne de sous-dossiers sur 3 niveaux.
+  db.prepare('INSERT INTO albums (id, user_id, parent_id) VALUES (2, 100, 1)').run()
+  db.prepare('INSERT INTO albums (id, user_id, parent_id) VALUES (3, 100, 2)').run()
+  db.prepare('INSERT INTO albums (id, user_id, parent_id) VALUES (4, 100, 3)').run()
   return db
 }
 
@@ -32,6 +41,38 @@ describe('getAlbumAccess', () => {
 
   it('returns null for a nonexistent album', () => {
     expect(getAlbumAccess(makeDb(), 42, 100)).toBeNull()
+  })
+
+  it('inherits owner access from an ancestor several levels up', () => {
+    const db = makeNestedDb()
+    expect(getAlbumAccess(db, 4, 100)).toBe('owner')
+  })
+
+  it('inherits collaborator access from an ancestor several levels up', () => {
+    const db = makeNestedDb()
+    expect(getAlbumAccess(db, 4, 200)).toBe('collaborator')
+  })
+
+  it('direct access on a deep sub-folder wins even if unrelated to inherited access', () => {
+    const db = makeNestedDb()
+    db.prepare('INSERT INTO album_collaborators (album_id, user_id) VALUES (4, 300)').run()
+    expect(getAlbumAccess(db, 4, 300)).toBe('collaborator')
+  })
+
+  it('returns null for a user with no access anywhere in the chain', () => {
+    const db = makeNestedDb()
+    expect(getAlbumAccess(db, 4, 999)).toBeNull()
+  })
+
+  it('does not loop forever if parent_id data forms a cycle', () => {
+    const db = new Database(':memory:')
+    db.exec(`
+      CREATE TABLE albums (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, parent_id INTEGER);
+      CREATE TABLE album_collaborators (id INTEGER PRIMARY KEY, album_id INTEGER NOT NULL, user_id INTEGER);
+    `)
+    db.prepare('INSERT INTO albums (id, user_id, parent_id) VALUES (1, 100, 2)').run()
+    db.prepare('INSERT INTO albums (id, user_id, parent_id) VALUES (2, 100, 1)').run()
+    expect(getAlbumAccess(db, 1, 999)).toBeNull()
   })
 })
 
