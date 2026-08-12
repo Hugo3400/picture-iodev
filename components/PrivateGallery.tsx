@@ -873,6 +873,17 @@ export default function PrivateGallery({ user, isAdmin, initialAlbums, initialPh
 
         {/* Main */}
         <main style={{ flex: 1, padding: 24, minWidth: 0 }}>
+          {albumPath.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 4, marginBottom: 10, fontSize: 12 }}>
+              <button onClick={() => setSelectedAlbum(null)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: '2px 4px' }}>Racine</button>
+              {albumPath.map(a => (
+                <span key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <IconChevronRight size={11} style={{ color: 'var(--text-faint)' }} />
+                  <button onClick={() => setSelectedAlbum(a.id)} style={{ background: 'none', border: 'none', color: a.id === selectedAlbum ? 'var(--text)' : 'var(--text-faint)', fontWeight: a.id === selectedAlbum ? 600 : 400, cursor: 'pointer', padding: '2px 4px' }}>{a.name}</button>
+                </span>
+              ))}
+            </div>
+          )}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
             <div>
               <h1 style={{ color: 'var(--text)', fontSize: 16, fontWeight: 600 }}>
@@ -937,7 +948,7 @@ export default function PrivateGallery({ user, isAdmin, initialAlbums, initialPh
               </div>
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 14 }}>
-                {[...ownedAlbums, ...sharedAlbums].map((a, idx) => (
+                {rootAlbums.map((a, idx) => (
                   <motion.div
                     key={a.id}
                     initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
@@ -957,19 +968,49 @@ export default function PrivateGallery({ user, isAdmin, initialAlbums, initialPh
                 ))}
               </div>
             )
-          ) : visiblePhotos.length === 0 ? (
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '50vh', gap: 14 }}>
-              <IconImage size={36} style={{ color: 'var(--text-faint)' }} />
-              {searchQuery.trim() && basePhotos.length > 0 ? (
-                <p style={{ color: 'var(--text-faint)', fontSize: 14 }}>Aucun résultat pour « {searchQuery.trim()} »</p>
-              ) : (
-                <>
-                  <p style={{ color: 'var(--text-faint)', fontSize: 14 }}>Aucune photo ici</p>
-                  <button onClick={() => setShowUpload(true)} style={S.btn()}>Ajouter des photos</button>
-                </>
-              )}
-            </div>
           ) : (
+            <>
+              {selectedAlbum !== null && subAlbums.length > 0 && (
+                <div style={{ marginBottom: 22 }}>
+                  <div style={{ fontSize: 11, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 10 }}>Sous-dossiers</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 14 }}>
+                    {subAlbums.map(a => (
+                      <div
+                        key={a.id}
+                        onClick={() => setSelectedAlbum(a.id)}
+                        style={{ cursor: 'pointer', borderRadius: 'var(--radius-md)', overflow: 'hidden', border: '1px solid var(--border)', background: 'var(--bg-card)' }}
+                      >
+                        <div style={{ aspectRatio: '1 / 1', background: 'var(--bg-elevated)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          {albumCover(a.id)
+                            ? <img src={albumCover(a.id)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            : <IconFolder size={28} style={{ color: 'var(--text-faint)' }} />}
+                        </div>
+                        <div style={{ padding: '9px 11px' }}>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</div>
+                          <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>{a.photo_count} photo{a.photo_count !== 1 ? 's' : ''}{a.role === 'collaborator' && a.owner_name ? ` · ${a.owner_name}` : ''}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {visiblePhotos.length === 0 ? (
+                selectedAlbum !== null && subAlbums.length > 0 ? (
+                  <p style={{ color: 'var(--text-faint)', fontSize: 13 }}>Aucune photo directement dans ce dossier.</p>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '50vh', gap: 14 }}>
+                    <IconImage size={36} style={{ color: 'var(--text-faint)' }} />
+                    {searchQuery.trim() && basePhotos.length > 0 ? (
+                      <p style={{ color: 'var(--text-faint)', fontSize: 14 }}>Aucun résultat pour « {searchQuery.trim()} »</p>
+                    ) : (
+                      <>
+                        <p style={{ color: 'var(--text-faint)', fontSize: 14 }}>Aucune photo ici</p>
+                        <button onClick={() => setShowUpload(true)} style={S.btn()}>Ajouter des photos</button>
+                      </>
+                    )}
+                  </div>
+                )
+              ) : (
             <div className="masonry">
               {visiblePhotos.map((p, idx) => (
                 <div key={p.id} className="masonry-item">
@@ -1013,6 +1054,8 @@ export default function PrivateGallery({ user, isAdmin, initialAlbums, initialPh
                 </div>
               ))}
             </div>
+              )}
+            </>
           )}
         </main>
       </div>
@@ -1181,8 +1224,17 @@ export default function PrivateGallery({ user, isAdmin, initialAlbums, initialPh
       {showNewAlbum && (
         <motion.div {...overlayMotion} style={S.modal} onClick={() => setShowNewAlbum(false)}>
           <motion.div {...cardMotion} style={{ ...S.card, maxWidth: 360 }} onClick={e => e.stopPropagation()}>
-            <h2 style={{ color: 'var(--text)', fontSize: 16, fontWeight: 600, marginBottom: 14 }}>Nouvel album</h2>
+            <h2 style={{ color: 'var(--text)', fontSize: 16, fontWeight: 600, marginBottom: 4 }}>Nouvel album</h2>
+            <p style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 14 }}>
+              {selectedAlbum === null || newAlbumAtRoot ? 'Sera créé à la racine.' : `Sera créé dans « ${selectedAlbumObj?.name} ».`}
+            </p>
             <input value={newAlbumName} onChange={e => setNewAlbumName(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleCreateAlbum()} placeholder="Nom de l'album" style={{ ...S.input, marginBottom: 14 }} autoFocus />
+            {selectedAlbum !== null && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, cursor: 'pointer' }}>
+                <input type="checkbox" checked={newAlbumAtRoot} onChange={e => setNewAlbumAtRoot(e.target.checked)} />
+                <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>Créer à la racine plutôt que dans le dossier actuel</span>
+              </label>
+            )}
             <button onClick={handleCreateAlbum} disabled={!newAlbumName.trim()} style={{ ...S.btn(!!newAlbumName.trim()), width: '100%', justifyContent: 'center' }}>Créer</button>
           </motion.div>
         </motion.div>
@@ -1365,6 +1417,28 @@ export default function PrivateGallery({ user, isAdmin, initialAlbums, initialPh
               <button onClick={() => handleMove(null)} style={{ textAlign: 'left', background: moveModal.albumId === null ? 'rgba(91,141,239,0.12)' : 'transparent', color: moveModal.albumId === null ? 'var(--accent)' : 'var(--text-dim)', border: 'none', borderRadius: 'var(--radius-sm)', padding: '9px 12px', fontSize: 13, cursor: 'pointer' }}>Sans album</button>
               {albums.map(a => (
                 <button key={a.id} onClick={() => handleMove(a.id)} style={{ textAlign: 'left', display: 'flex', alignItems: 'center', gap: 8, background: moveModal.albumId === a.id ? 'rgba(91,141,239,0.12)' : 'transparent', color: moveModal.albumId === a.id ? 'var(--accent)' : 'var(--text-dim)', border: 'none', borderRadius: 'var(--radius-sm)', padding: '9px 12px', fontSize: 13, cursor: 'pointer' }}><IconFolder size={13} /> {a.name}</button>
+              ))}
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+
+      {/* Move album modal (déplacer un dossier lui-même, pas son contenu) */}
+      {moveAlbumModal && (
+        <motion.div {...overlayMotion} style={S.modal} onClick={() => setMoveAlbumModal(null)}>
+          <motion.div {...cardMotion} style={{ ...S.card, maxWidth: 360 }} onClick={e => e.stopPropagation()}>
+            <h2 style={{ color: 'var(--text)', fontSize: 16, fontWeight: 600, marginBottom: 4 }}>Déplacer l'album</h2>
+            <p style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 14 }}>« {moveAlbumModal.name} » — choisis son nouveau dossier parent.</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 280, overflowY: 'auto' }}>
+              <button onClick={() => handleMoveAlbum(null)} style={{ textAlign: 'left', background: 'transparent', color: 'var(--text-dim)', border: 'none', borderRadius: 'var(--radius-sm)', padding: '9px 12px', fontSize: 13, cursor: 'pointer', fontWeight: 600 }}>Racine</button>
+              {flattenOwnedForMove(new Set([moveAlbumModal.id, ...Array.from(getDescendantIds(moveAlbumModal.id))])).map(({ album: a, depth }) => (
+                <button
+                  key={a.id}
+                  onClick={() => handleMoveAlbum(a.id)}
+                  style={{ textAlign: 'left', display: 'flex', alignItems: 'center', gap: 8, background: 'transparent', color: 'var(--text-dim)', border: 'none', borderRadius: 'var(--radius-sm)', padding: '9px 12px', paddingLeft: 12 + depth * 16, fontSize: 13, cursor: 'pointer' }}
+                >
+                  <IconFolder size={13} /> {a.name}
+                </button>
               ))}
             </div>
           </motion.div>
