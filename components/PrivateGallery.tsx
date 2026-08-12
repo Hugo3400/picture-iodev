@@ -658,6 +658,13 @@ export default function PrivateGallery({ user, isAdmin, initialAlbums, initialPh
               ))}
             </>
           )}
+
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 8px', marginTop: 24, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+            <a href="/a-propos" style={{ fontSize: 10.5, color: 'var(--text-faint)', textDecoration: 'none' }}>À propos</a>
+            <a href="/confidentialite" style={{ fontSize: 10.5, color: 'var(--text-faint)', textDecoration: 'none' }}>Confidentialité</a>
+            <a href="/conditions-utilisation" style={{ fontSize: 10.5, color: 'var(--text-faint)', textDecoration: 'none' }}>CGU</a>
+            <a href="/mentions-legales" style={{ fontSize: 10.5, color: 'var(--text-faint)', textDecoration: 'none' }}>Mentions légales</a>
+          </div>
         </aside>
 
         {/* Main */}
