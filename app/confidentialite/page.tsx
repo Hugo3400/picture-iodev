@@ -24,8 +24,12 @@ export default function ConfidentialitePage() {
           d'origine, taille, légende éventuelle, date d'ajout).
         </li>
         <li>
-          <strong>Adresses IP</strong> — enregistrées lors d'un upload sur l'hébergeur d'images public (sans compte), lors
-          de tentatives de connexion, de création de compte, ou de déverrouillage d'un lien protégé par mot de passe.
+          <strong>Adresses IP</strong> — enregistrées à chaque connexion à ton compte (quelle que soit la méthode) et à
+          chaque envoi de fichier, que ce soit sur l'hébergeur d'images public (sans compte) ou dans ton espace privé,
+          ainsi que lors de tentatives de connexion, de création de compte, ou de déverrouillage d'un lien protégé par mot
+          de passe. Les adresses IP liées à ton activité normale (connexions, uploads) permettent notamment de répondre à
+          une éventuelle réquisition légale visant un compte ou un contenu précis — voir « Communication aux autorités »
+          ci-dessous.
         </li>
         <li>
           <strong>Cookie de session</strong> — un unique cookie (<code>pic_session</code>), technique et strictement
@@ -53,7 +57,9 @@ export default function ConfidentialitePage() {
         Les données de compte et les fichiers sont conservés tant que le compte existe. Les images de l'hébergeur public
         (sans compte) sont supprimées automatiquement à la date d'expiration choisie au moment de l'envoi. Les adresses IP
         liées à la sécurité (tentatives de connexion, d'inscription, de déverrouillage de lien) sont conservées pour une
-        durée limitée, le temps nécessaire à la détection d'abus.
+        durée limitée, le temps nécessaire à la détection d'abus. Les adresses IP liées aux connexions et aux envois de
+        fichiers d'un compte sont conservées tant que le compte existe, pour les mêmes finalités de sécurité et de réponse
+        à une éventuelle obligation légale.
       </p>
 
       <h2 style={legalStyles.h2}>Communication aux autorités</h2>
